@@ -80,29 +80,42 @@ def load_last_24h(client, symbol):
     last_kpoint = KLinePoint(*klines[-1])
     klines_partial = client.klines(symbol, "1m", startTime=last_kpoint.close_time)
     data.extend([CoinPoint(x) for x in klines_partial])
+    print("got", len(data), "datapoints")
     assert len(data) == 1440
 
     return data
 
 
-def magic_graphs(data, symbol):
-    fig, ax = plt.subplots()
+def discrete_derivatives(y):
+    length = len(y)
+    first = [0.0] + [y[i1] - y[i0] for i0, i1 in zip(range(length - 1), range(1, length))]
+    second = [0.0] + [first[i1] - first[i0] for i0, i1 in zip(range(length - 1), range(1, length))]
+    return first, second
 
+
+def magic_graphs(data, symbol):
     timeline = [x.open_time for x in data]
     price = [x.open for x in data]
+    derivatives = discrete_derivatives(price)
 
-    ax.plot(timeline, price, linewidth=2.0)
-    ax.xaxis.set_major_locator(mdates.HourLocator(interval=4))
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
-    ax.xaxis.set_minor_locator(mdates.HourLocator())
-    # ax.xaxis.set_minor_formatter(mdates.DateFormatter('%H:%M'))
-    ax.grid(visible=True, which="both")
+    fig, axes = plt.subplots(3, 1, sharex=True)
 
-    ax.set_ylabel("Price")
-    ax.set_title(symbol)
+    axes[0].plot(timeline, price, "r.--")
+    axes[0].xaxis.set_major_locator(mdates.HourLocator(interval=2))
+    axes[0].xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+    axes[0].xaxis.set_minor_locator(mdates.MinuteLocator(interval=10))
+    axes[0].grid(visible=True, which="both")
 
-    for label in ax.get_xticklabels(which="major"):
+    for label in axes[0].get_xticklabels(which="major"):
         label.set(rotation=45, horizontalalignment="right")
+
+    axes[1].plot(timeline, derivatives[0], "g.:")
+    axes[1].set_ylabel("Velocity")
+    axes[1].grid(visible=True, which="both")
+
+    axes[2].plot(timeline, derivatives[1], "b.:")
+    axes[2].set_ylabel("Acceleration")
+    axes[2].grid(visible=True, which="both")
 
     plt.show()
 
@@ -110,7 +123,7 @@ def magic_graphs(data, symbol):
 def main(client):
 
     symbol = "ETHBTC"
-    cache_file = "test.dat"
+    cache_file = f"{symbol}.dat"
     data = None
 
     if os.path.isfile(cache_file):
