@@ -6,6 +6,7 @@ from binance.spot import Spot
 from datetime import datetime, timedelta
 from dataclasses import dataclass
 from collections import namedtuple
+from statistics import stdev, mean
 import pickle
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
@@ -70,7 +71,7 @@ class CoinPoint:
 def load_last_24h(client, symbol):
     # load the last 24h
     time_data = client.time()
-    since = time_data["serverTime"] - 24 * 60 * 60 * 1000  # 24h ago
+    since = time_data["serverTime"] - 4 * 60 * 60 * 1000  # 24h ago
 
     # pick the first 1000 points batch
     klines = client.klines(symbol, "1m", startTime=since, limit=1000)
@@ -81,48 +82,112 @@ def load_last_24h(client, symbol):
     klines_partial = client.klines(symbol, "1m", startTime=last_kpoint.close_time)
     data.extend([CoinPoint(x) for x in klines_partial])
     print("got", len(data), "datapoints")
-    assert len(data) == 1440
+
+    # assert len(data) == 1440
 
     return data
 
 
-def discrete_derivatives(y):
-    length = len(y)
-    first = [0.0] + [y[i1] - y[i0] for i0, i1 in zip(range(length - 1), range(1, length))]
-    second = [0.0] + [first[i1] - first[i0] for i0, i1 in zip(range(length - 1), range(1, length))]
-    return first, second
+def discrete_derivatives(y, open):
+    yy = [open] + y
+    length = len(yy)
+    first = [yy[i1] - yy[i0] for i0, i1 in zip(range(length - 1), range(1, length))]
+    return first
+
+
+def bollinger_bands(samples, window=7, factor=2.4):
+    roll_mean = [samples[0]]
+    low = [samples[0]]
+    high = [samples[0]]
+    roll_stdev = [0.0]
+
+    for right in range(1, len(samples)):
+        left = max(right - 20, 0)
+        mm = mean(samples[left : right + 1])
+        std = stdev(samples[left : right + 1])
+        roll_mean.append(mm)
+        low.append(mm - factor * std)
+        high.append(mm + factor * std)
+        roll_stdev.append(factor * std)
+    return (roll_mean, low, high, roll_stdev)
+
+
+def digest_signals(timeline, price, distance, bb_stdev):
+    markers = []
+    length = len(timeline)
+    for i in range(length):
+        if distance[i] >= bb_stdev[i]:
+            markers.append((timeline[i], price[i], "SELL"))
+        elif distance[i] <= -bb_stdev[i]:
+            markers.append((timeline[i], price[i], "BUY"))
+
+    return markers
 
 
 def magic_graphs(data, symbol):
     timeline = [x.open_time for x in data]
-    price = [x.open for x in data]
-    derivatives = discrete_derivatives(price)
+    price = [x.close for x in data]
+    bb_mean, bb_high, bb_low, bb_stdev = bollinger_bands(price)
 
-    fig, axes = plt.subplots(3, 1, sharex=True)
+    fig, axes = plt.subplots(2, 1, sharex=True)
 
-    axes[0].plot(timeline, price, "r.--")
+    axes[0].plot(
+        timeline,
+        price,
+        "b.-",
+        # timeline, bb_high, "r,-",
+        # timeline, bb_low, "g,-",
+        timeline,
+        bb_mean,
+        "y,-",
+    )
     axes[0].xaxis.set_major_locator(mdates.HourLocator(interval=2))
     axes[0].xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
     axes[0].xaxis.set_minor_locator(mdates.MinuteLocator(interval=10))
     axes[0].grid(visible=True, which="both")
+    axes[0].set_title(symbol)
 
     for label in axes[0].get_xticklabels(which="major"):
         label.set(rotation=45, horizontalalignment="right")
 
-    axes[1].plot(timeline, derivatives[0], "g.:")
-    axes[1].set_ylabel("Velocity")
+    distance = [p - m for p, m in zip(price, bb_mean)]
+    bb_stdev_opp = [-x for x in bb_stdev]
+    axes[1].plot(
+        timeline,
+        distance,
+        "m.:",
+        timeline,
+        bb_stdev,
+        "g,--",
+        timeline,
+        bb_stdev_opp,
+        "r,--",
+    )
+    axes[1].set_ylabel("distance")
     axes[1].grid(visible=True, which="both")
 
-    axes[2].plot(timeline, derivatives[1], "b.:")
-    axes[2].set_ylabel("Acceleration")
-    axes[2].grid(visible=True, which="both")
+    signals = digest_signals(timeline, price, distance, bb_stdev)
+    for sig in signals:
+        x, y, msg = sig
+
+        axes[0].annotate(
+            msg,
+            xy=(x, y),
+            fontsize="large",
+            xytext=((0.0, +34.0) if msg == "SELL" else (0.0, -34.0)),
+            textcoords="offset pixels",
+            color="green" if msg == "SELL" else "red",
+            horizontalalignment="center",
+            verticalalignment="center",
+            arrowprops=dict(arrowstyle="->"),
+        )
 
     plt.show()
 
 
 def main(client):
 
-    symbol = "ETHBTC"
+    symbol = "LUNABTC"
     cache_file = f"{symbol}.dat"
     data = None
 
