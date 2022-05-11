@@ -11,6 +11,8 @@ from statistics import stdev, mean
 from enum import Enum
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+import schedule
+import time
 
 
 CREDENTIALS_CACHE = "credentials.ini"
@@ -126,10 +128,13 @@ class Flipper:
     def __init__(self, symbol, budget, data):
         self.symbol = symbol
         self.budget = budget
-        self.next_move = FlipSignals.ENTRY
+        self.follow_up = None
 
-        self.factor = 2.3
-        self.window = 21
+        # self.factor = 2.61803398875
+        # self.factor = 2.3
+        self.factor = 1.61803398875
+
+        self.window = 7
 
         assert len(data) > self.window, "Data feed is shorter than the window"
 
@@ -137,12 +142,12 @@ class Flipper:
         klines = [KLinePoint(*x) for x in data]
         self.prices = [float(x.close) for x in klines]
         self.timeline = [datetime.fromtimestamp(x.close_time // 1000) for x in klines]
+        self.velocity = [first.close - first.open]
 
         self.bb_mean = [mean([first.open, first.close])]
         self.bb_stdev = [stdev([first.open, first.close])]
         self.bb_low = [min([first.open, first.close])]
         self.bb_high = [max([first.open, first.close])]
-        self.bb_dist = [first.open - self.bb_mean[0]]
 
         for right in range(1, len(self.prices)):
             left = max(right - self.window, 0)
@@ -150,16 +155,19 @@ class Flipper:
             std = stdev(self.prices[left : right + 1])
 
             self.bb_stdev.append(self.factor * std)
-            self.bb_dist.append(self.prices[right] - mm)
             self.bb_mean.append(mm)
             self.bb_high.append(mm + self.factor * std)
             self.bb_low.append(mm - self.factor * std)
+            self.velocity.append(self.prices[right] - self.prices[right - 1])
+
+        self.last_kline = klines[-1]
+
 
     def draw_trading_chart(self, limit=1000):
         since = len(self.prices) - limit
-        fig, axes = plt.subplots(2, 1, sharex=True)
+        fig, axes = plt.subplots(1, 1, sharex=True)
 
-        axes[0].plot(
+        axes.plot(
             self.timeline[since:], self.bb_high[since:], "r,:",
             self.timeline[since:], self.bb_low[since:], "g,:",
             self.timeline[since:], self.bb_mean[since:], "y,:",
@@ -167,31 +175,81 @@ class Flipper:
             linewidth=0.5,
         )
 
-        axes[0].xaxis.set_major_locator(mdates.HourLocator(interval=3))
-        axes[0].xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
-        axes[0].xaxis.set_minor_locator(mdates.HourLocator())
-        axes[0].grid(visible=True, which="both")
-        axes[0].set_title(self.symbol)
+        axes.xaxis.set_major_locator(mdates.HourLocator(interval=3))
+        axes.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+        axes.xaxis.set_minor_locator(mdates.HourLocator())
+        axes.grid(visible=True, which="both")
+        axes.set_title(f"{self.symbol}")
 
-        for label in axes[0].get_xticklabels(which="major"):
+        for label in axes.get_xticklabels(which="major"):
             label.set(rotation=45, horizontalalignment="right")
-
-        bb_stdev_opp = [-x for x in self.bb_stdev[since:]]
-        axes[1].plot(
-            self.timeline[since:], self.bb_stdev[since:], "r,:",
-            self.timeline[since:], bb_stdev_opp,  "g,:",
-            self.timeline[since:], self.bb_dist[since:], "m,-",
-            linewidth=0.5,
-        )
-        axes[1].set_ylabel("distance")
-        axes[1].grid(visible=True, which="both")
 
         timed = self.timeline[-1].strftime("%Y-%m-%d_%H:%M:%S")
         plt.savefig(f"{self.symbol}_chart_{timed}.png", dpi=600)
+        plt.close()
 
-    def feed_ticker(self, data):
-        # takes in a new kline, updates stats and returns a signal
-        return FlipSignals.HOLD
+    @property
+    def last_price(self):
+        return float(self.last_kline.close)
+
+    @property
+    def last_timestamp(self):
+        return self.last_kline.close_time
+
+    def feed_klines(self, data):
+        if not data:
+            print("provided data seems empty, feeding skipped.")
+            return
+
+        start_at = len(self.prices)
+        klines = [KLinePoint(*x) for x in data]
+        self.prices.extend([float(x.close) for x in klines])
+        self.timeline.extend([datetime.fromtimestamp(x.close_time // 1000) for x in klines])
+
+        cnt = 0
+        for right in range(start_at, len(self.prices)):
+            left = max(right - self.window, 0)
+            mm = mean(self.prices[left : right + 1])
+            std = stdev(self.prices[left : right + 1])
+
+            self.bb_stdev.append(self.factor * std)
+            self.bb_mean.append(mm)
+            self.bb_high.append(mm + self.factor * std)
+            self.bb_low.append(mm - self.factor * std)
+            self.velocity.append(self.prices[right] - self.prices[right - 1])
+            cnt += 1
+
+        self.last_kline = klines[-1]
+
+        # trigger signal base on last point only
+        price = self.prices[-1]
+        mm = self.bb_mean[-1]
+        mdev = self.bb_stdev[-1]
+        velocity = self.velocity[-1]
+        dist = price - mm
+
+        signal = FlipSignals.HOLD
+        if self.follow_up in {FlipSignals.ENTRY, FlipSignals.BUY}:
+            if velocity >= 0:
+                signal = FlipSignals.BUY
+                self.follow_up = None
+        elif self.follow_up in {FlipSignals.SELL}:
+            if velocity <= 0:
+                signal = FlipSignals.SELL
+                self.follow_up = None
+        else:
+            if dist >= mdev:
+                if velocity >= 0:
+                    self.follow_up = FlipSignals.SELL
+                else:
+                    signal = FlipSignals.SELL
+            elif dist <= -mdev:
+                if velocity <= 0:
+                    self.follow_up = FlipSignals.BUY
+                else:
+                    signal = FlipSignals.BUY
+
+        return signal
 
 
 def magic_graphs(data, symbol):
@@ -203,14 +261,10 @@ def magic_graphs(data, symbol):
     fig, axes = plt.subplots(2, 1, sharex=True)
 
     axes[0].plot(
-        timeline,
-        price,
-        "b.-",
+        timeline, price, "b.-",
         # timeline, bb_high, "r,-",
         # timeline, bb_low, "g,-",
-        timeline,
-        bb_mean,
-        "y,-",
+        timeline, bb_mean, "y,-",
     )
     axes[0].xaxis.set_major_locator(mdates.HourLocator(interval=2))
     axes[0].xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
@@ -224,15 +278,9 @@ def magic_graphs(data, symbol):
     distance = [p - m for p, m in zip(price, bb_mean)]
     bb_stdev_opp = [-x for x in bb_stdev]
     axes[1].plot(
-        timeline,
-        distance,
-        "m.:",
-        timeline,
-        bb_stdev,
-        "g,--",
-        timeline,
-        bb_stdev_opp,
-        "r,--",
+        timeline, distance, "m.:",
+        timeline, bb_stdev, "g,--",
+        timeline, bb_stdev_opp, "r,--",
     )
     axes[1].set_ylabel("distance")
     axes[1].grid(visible=True, which="both")
@@ -256,27 +304,91 @@ def magic_graphs(data, symbol):
     plt.show()
 
 
+symbol = "BTCEUR"
+price_cache = f"{symbol}_price.dat"
+orders_cache = f"{symbol}_orders.dat"
+data = None
+flippy = None
+order_history = list()
+holdings = 0.003521
+currency = 0.0
+
+def tick():
+    global currency
+    global holdings
+    global order_history
+
+    since = flippy.last_timestamp
+    new_data = client.klines(symbol=symbol, interval="1m", startTime=since)
+    print(f"Got {len(new_data)} {symbol} entries")
+
+    if (new_data):
+        signal = flippy.feed_klines(new_data)
+        print(f"Flippy recommends {signal}")
+
+        if signal == FlipSignals.BUY and currency >= 25:
+            bought = (25.0 / flippy.last_price) * 0.999
+            currency -= 25.0
+            holdings += bought
+            print(f"Bought {bought:.6f} at {flippy.last_price:.6f}.")
+            total = holdings * flippy.last_price + currency
+            print(f"\t .. Wallet .. {holdings:.6f} and {currency:.6f}, valued at {total:.6f}")
+        elif signal == FlipSignals.SELL and holdings > 0:
+            sold = (25.0 / flippy.last_price)
+            if (sold <= holdings):
+                holdings -= sold
+                currency += sold * flippy.last_price * 0.999
+                print(f"Sold {sold:.6f} at {flippy.last_price:.6f}.")
+            else:
+                print(f"cannot sell {sold:.6f}, current holdings {holdings:.6f}")
+            total = holdings * flippy.last_price + currency
+            print(f"\t .. Wallet .. {holdings:.6f} and {currency:.6f}, valued at {total:.6f}")
+
+
+        data.extend(new_data)
+        with open(price_cache, "wb") as data_file:
+            pickle.dump(data, data_file)
+
+        if signal != FlipSignals.HOLD:
+
+            order = dict(signal=signal, price=flippy.last_price, time=flippy.last_timestamp)
+            order_history.append(order)
+            with open(orders_cache, "wb") as data_file:
+                pickle.dump(order_history, data_file)
+
+    flippy.draw_trading_chart(limit=200)
+
+
 def main(client):
+    global flippy  ## horrible I know
+    global data
+    global order_history
 
-    symbol = "ETHBTC"
-    cache_file = f"{symbol}.dat"
-    data = None
-
-    if os.path.isfile(cache_file):
-        print("Using local cache...")
-        with open(cache_file, "rb") as data_file:
+    # load price history
+    if os.path.isfile(price_cache):
+        print(f"Using local cache ({price_cache})...")
+        with open(price_cache, "rb") as data_file:
             data = pickle.load(data_file)
     else:
         print("Reading last 24h")
         data = load_last_24h(client, symbol)
-        with open(cache_file, "wb") as data_file:
+        with open(price_cache, "wb") as data_file:
             pickle.dump(data, data_file)
-            print("cached to", cache_file)
+            print("cached to", price_cache)
 
-    # magic_graphs(data, symbol)
+    # load order history
+    if os.path.isfile(orders_cache):
+        print(f"Using local cache ({orders_cache})...")
+        with open(orders_cache, "rb") as data_file:
+            order_history = pickle.load(data_file)
+
     budget = "0.002"
     flippy = Flipper(symbol, budget, data)
-    flippy.draw_trading_chart(limit=1000)
+
+    schedule.every().minute.at(":13").do(tick)
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
 
 
 if __name__ == "__main__":
