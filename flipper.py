@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import pickle
 import os
 import configparser
 from binance.spot import Spot
@@ -7,7 +8,7 @@ from datetime import datetime, timedelta
 from dataclasses import dataclass
 from collections import namedtuple
 from statistics import stdev, mean
-import pickle
+from enum import Enum
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
@@ -54,7 +55,7 @@ KLinePoint = namedtuple(
 
 
 @dataclass
-class CoinPoint:
+class PricePoint:
     open_time: datetime
     open: float
     close: float
@@ -69,22 +70,8 @@ class CoinPoint:
 
 
 def load_last_24h(client, symbol):
-    # load the last 24h
     time_data = client.time()
-    since = time_data["serverTime"] - 4 * 60 * 60 * 1000  # 24h ago
-
-    # pick the first 1000 points batch
-    klines = client.klines(symbol, "1m", startTime=since, limit=1000)
-    data = [CoinPoint(x) for x in klines]
-
-    # pick the remaining 440 points batch
-    last_kpoint = KLinePoint(*klines[-1])
-    klines_partial = client.klines(symbol, "1m", startTime=last_kpoint.close_time)
-    data.extend([CoinPoint(x) for x in klines_partial])
-    print("got", len(data), "datapoints")
-
-    # assert len(data) == 1440
-
+    data = client.klines(symbol, "1m", limit=1000)
     return data
 
 
@@ -95,7 +82,10 @@ def discrete_derivatives(y, open):
     return first
 
 
-def bollinger_bands(samples, window=7, factor=2.4):
+def bollinger_bands(samples, window=7):
+    # factor = 2.61803398875
+    factor = 2.3
+    # factor = 1.61803398875
     roll_mean = [samples[0]]
     low = [samples[0]]
     high = [samples[0]]
@@ -124,9 +114,90 @@ def digest_signals(timeline, price, distance, bb_stdev):
     return markers
 
 
+class FlipSignals(Enum):
+    HOLD = 0
+    ENTRY = 1
+    SELL = 2
+    BUY = 3
+    EXIT = 4
+
+
+class Flipper:
+    def __init__(self, symbol, budget, data):
+        self.symbol = symbol
+        self.budget = budget
+        self.next_move = FlipSignals.ENTRY
+
+        self.factor = 2.3
+        self.window = 21
+
+        assert len(data) > self.window, "Data feed is shorter than the window"
+
+        first = PricePoint(data[0])
+        klines = [KLinePoint(*x) for x in data]
+        self.prices = [float(x.close) for x in klines]
+        self.timeline = [datetime.fromtimestamp(x.close_time // 1000) for x in klines]
+
+        self.bb_mean = [mean([first.open, first.close])]
+        self.bb_stdev = [stdev([first.open, first.close])]
+        self.bb_low = [min([first.open, first.close])]
+        self.bb_high = [max([first.open, first.close])]
+        self.bb_dist = [first.open - self.bb_mean[0]]
+
+        for right in range(1, len(self.prices)):
+            left = max(right - self.window, 0)
+            mm = mean(self.prices[left : right + 1])
+            std = stdev(self.prices[left : right + 1])
+
+            self.bb_stdev.append(self.factor * std)
+            self.bb_dist.append(self.prices[right] - mm)
+            self.bb_mean.append(mm)
+            self.bb_high.append(mm + self.factor * std)
+            self.bb_low.append(mm - self.factor * std)
+
+    def draw_trading_chart(self, limit=1000):
+        since = len(self.prices) - limit
+        fig, axes = plt.subplots(2, 1, sharex=True)
+
+        axes[0].plot(
+            self.timeline[since:], self.bb_high[since:], "r,:",
+            self.timeline[since:], self.bb_low[since:], "g,:",
+            self.timeline[since:], self.bb_mean[since:], "y,:",
+            self.timeline[since:], self.prices[since:], "b,-",
+            linewidth=0.5,
+        )
+
+        axes[0].xaxis.set_major_locator(mdates.HourLocator(interval=3))
+        axes[0].xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+        axes[0].xaxis.set_minor_locator(mdates.HourLocator())
+        axes[0].grid(visible=True, which="both")
+        axes[0].set_title(self.symbol)
+
+        for label in axes[0].get_xticklabels(which="major"):
+            label.set(rotation=45, horizontalalignment="right")
+
+        bb_stdev_opp = [-x for x in self.bb_stdev[since:]]
+        axes[1].plot(
+            self.timeline[since:], self.bb_stdev[since:], "r,:",
+            self.timeline[since:], bb_stdev_opp,  "g,:",
+            self.timeline[since:], self.bb_dist[since:], "m,-",
+            linewidth=0.5,
+        )
+        axes[1].set_ylabel("distance")
+        axes[1].grid(visible=True, which="both")
+
+        timed = self.timeline[-1].strftime("%Y-%m-%d_%H:%M:%S")
+        plt.savefig(f"{self.symbol}_chart_{timed}.png", dpi=600)
+
+    def feed_ticker(self, data):
+        # takes in a new kline, updates stats and returns a signal
+        return FlipSignals.HOLD
+
+
 def magic_graphs(data, symbol):
-    timeline = [x.open_time for x in data]
-    price = [x.close for x in data]
+    klines = [KLinePoint(*x) for x in data]
+    timeline = [datetime.fromtimestamp(x.close_time // 1000) for x in klines]
+    price = [float(x.close) for x in klines]
     bb_mean, bb_high, bb_low, bb_stdev = bollinger_bands(price)
 
     fig, axes = plt.subplots(2, 1, sharex=True)
@@ -187,7 +258,7 @@ def magic_graphs(data, symbol):
 
 def main(client):
 
-    symbol = "LUNABTC"
+    symbol = "ETHBTC"
     cache_file = f"{symbol}.dat"
     data = None
 
@@ -202,7 +273,10 @@ def main(client):
             pickle.dump(data, data_file)
             print("cached to", cache_file)
 
-    magic_graphs(data, symbol)
+    # magic_graphs(data, symbol)
+    budget = "0.002"
+    flippy = Flipper(symbol, budget, data)
+    flippy.draw_trading_chart(limit=1000)
 
 
 if __name__ == "__main__":
