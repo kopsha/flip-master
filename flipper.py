@@ -310,8 +310,8 @@ orders_cache = f"{symbol}_orders.dat"
 data = None
 flippy = None
 order_history = list()
-holdings = 0.003521
-currency = 0.0
+holdings = 0.0
+currency = 100.0
 
 def tick():
     global currency
@@ -324,23 +324,31 @@ def tick():
 
     if (new_data):
         signal = flippy.feed_klines(new_data)
-        print(f"Flippy recommends {signal}")
+        print(".", end="")
 
-        if signal == FlipSignals.BUY and currency >= 25:
-            bought = (25.0 / flippy.last_price) * 0.999
-            currency -= 25.0
-            holdings += bought
-            print(f"Bought {bought:.6f} at {flippy.last_price:.6f}.")
+        if signal == FlipSignals.BUY:
+            print("\n* Flippy says BUY")
+            if currency >= 25.0:
+                bought = (25.0 / flippy.last_price) * 0.999
+                currency -= 25.0
+                holdings += bought
+                print(f"Bought {bought:.6f} at {flippy.last_price:.6f}.")
+            else:
+                print("Not enough currency")
+
             total = holdings * flippy.last_price + currency
-            print(f"\t .. Wallet .. {holdings:.6f} and {currency:.6f}, valued at {total:.6f}")
-        elif signal == FlipSignals.SELL and holdings > 0:
+            print(f"\t --> {holdings:.6f} and {currency:.6f}, valued at {total:.6f}")
+
+        elif signal == FlipSignals.SELL:
+            print("\n* Flippy says SELL")
             sold = (25.0 / flippy.last_price)
             if (sold <= holdings):
                 holdings -= sold
                 currency += sold * flippy.last_price * 0.999
                 print(f"Sold {sold:.6f} at {flippy.last_price:.6f}.")
             else:
-                print(f"cannot sell {sold:.6f}, current holdings {holdings:.6f}")
+                print(f"Not enough holding to sell {sold:.6f}, available {holdings:.6f}")
+
             total = holdings * flippy.last_price + currency
             print(f"\t .. Wallet .. {holdings:.6f} and {currency:.6f}, valued at {total:.6f}")
 
@@ -356,7 +364,7 @@ def tick():
             with open(orders_cache, "wb") as data_file:
                 pickle.dump(order_history, data_file)
 
-    flippy.draw_trading_chart(limit=200)
+    # flippy.draw_trading_chart(limit=200)
 
 
 def main(client):
