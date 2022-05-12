@@ -310,8 +310,8 @@ orders_cache = f"{symbol}_orders.dat"
 data = None
 flippy = None
 order_history = list()
-holdings = 0.0
-currency = 100.0
+holdings = 0.002674
+currency = 24.6
 
 def tick():
     global currency
@@ -350,7 +350,7 @@ def tick():
                 print(f"Not enough holding to sell {sold:.6f}, available {holdings:.6f}")
 
             total = holdings * flippy.last_price + currency
-            print(f"\t .. Wallet .. {holdings:.6f} and {currency:.6f}, valued at {total:.6f}")
+            print(f"\t --> {holdings:.6f} and {currency:.6f}, valued at {total:.6f}")
 
 
         data.extend(new_data)
@@ -392,6 +392,10 @@ def main(client):
 
     budget = "0.002"
     flippy = Flipper(symbol, budget, data)
+
+    total = holdings * flippy.last_price + currency
+    print(f"\t --> {holdings:.6f} and {currency:.6f}, valued at {total:.6f}")
+
 
     schedule.every().minute.at(":13").do(tick)
     while True:
