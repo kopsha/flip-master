@@ -310,8 +310,9 @@ orders_cache = f"{symbol}_orders.dat"
 data = None
 flippy = None
 order_history = list()
-holdings = 0.002674
-currency = 24.6
+holdings = 0.002731
+currency = 25.0
+
 
 def tick():
     global currency
@@ -320,11 +321,10 @@ def tick():
 
     since = flippy.last_timestamp
     new_data = client.klines(symbol=symbol, interval="1m", startTime=since)
-    print(f"Got {len(new_data)} {symbol} entries")
 
     if (new_data):
         signal = flippy.feed_klines(new_data)
-        print(".", end="")
+        print(".", end="", flush=True)
 
         if signal == FlipSignals.BUY:
             print("\n* Flippy says BUY")
