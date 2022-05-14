@@ -2,3 +2,4 @@
 credentials.ini
 *.dat
 *.png
+__pycache__/
