@@ -131,10 +131,9 @@ class Flipper:
         self.follow_up = None
 
         # self.factor = 2.61803398875
-        # self.factor = 2.3
-        self.factor = 1.61803398875
-
-        self.window = 7
+        self.factor = 1.9
+        # self.factor = 1.61803398875
+        self.window = 28
 
         assert len(data) > self.window, "Data feed is shorter than the window"
 
@@ -310,8 +309,8 @@ orders_cache = f"{symbol}_orders.dat"
 data = None
 flippy = None
 order_history = list()
-holdings = 0.002731
-currency = 25.0
+holdings = 0.017532
+currency = 484.0
 
 
 def tick():
