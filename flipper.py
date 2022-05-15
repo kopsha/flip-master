@@ -8,7 +8,8 @@ import matplotlib.dates as mdates
 import schedule
 import time
 from binance.spot import Spot
-from datetime import datetime, timedelta
+from binance.error import ClientError
+from datetime import datetime
 from statistics import stdev, mean
 from collections import deque
 from heapq import heappush, heappop
@@ -61,6 +62,16 @@ class Flipper:
         self.bb_high = list()
 
         self.last_kline = None
+
+        account_data = self.client.account()
+        self.commission = account_data["makerCommission"]
+        assert account_data["takerCommission"] == self.commission
+
+        info_data = client.exchange_info(symbol)
+        assert len(info_data["symbols"]) == 1
+        info = info_data["symbols"].pop()
+        self.base_symbol = info["baseAsset"]
+        self.quote_symbol = info["quoteAsset"]
 
     def _consume_first(self, kline_data):
         self.last_kline = KLinePoint(*kline_data)
@@ -188,44 +199,68 @@ class Flipper:
 
     def buy(self, amount):
 
-        if self.quote < amount:
-            print(f"Cannot buy, {self.quote:.2f} EUR is not enough to buy {amount:.8f}")
+        if self.quote < (amount * 0.99):
+            print(f"Cannot buy, {self.quote:.8f} {self.quote_symbol} is not enough to buy {amount:.8f} {self.base_symbol}")
             return
 
         if not self.buyin_price:
             self.buyin_price = self.last_price
 
-        self.quote -= amount
-        bought = (amount / self.last_price) * 0.999
-        self.base += bought
-        # print(f"Bought {bought:.8f} BTC at {self.last_price:.2f} EUR.")
+        try:
+            response = self.client.new_order(
+                symbol=self.symbol,
+                side="BUY",
+                type="MARKET",
+                quoteOrderQty=amount,
+            )
+        except ClientError as error:
+            print("BUY order failed:", error.error_message)
+            return
 
-        order = dict(signal=FlipSignals.BUY, price=self.last_price, time=self.last_timestamp)
-        self.order_history.append(order)
-        heappush(self.buy_heap, self.last_price)
+        bought = float(response["executedQty"])
+        for_quote = float(response["cummulativeQuoteQty"])
+        actual_price = for_quote / bought
+        self.quote -= for_quote
+        self.base += bought
+        self.order_history.append(response)
+        heappush(self.buy_heap, actual_price*0.8)
+
+        print(f"Bought {bought:.8f} {self.base_symbol} at {actual_price:.8f} {self.quote_symbol} [{for_quote:.8f} {self.quote_symbol}]")
 
     def sell(self, amount):
-        sold = amount / self.last_price
-        if (sold > self.base):
-            print(f"Cannot sell {sold:.8f} BTC, when only {self.base:.8f} is available")
+        est_sold = 0.99 * amount / self.last_price
+        if (est_sold > self.base):
+            print(f"Cannot sell {est_sold:.8f} {self.base_symbol}, when only {self.base:.8f} is available")
             return
 
         cheapest = self.buy_heap[0]
-        if self.last_price < (cheapest * 1.01):
+        if self.last_price <= (cheapest * 1.001):
             print(f"Cannot sell without profit, {self.last_price} < {cheapest}")
             return
 
-        cheapest = heappop(self.buy_heap)
+        try:
+            response = self.client.new_order(
+                symbol=self.symbol,
+                side="SELL",
+                type="MARKET",
+                quoteOrderQty=amount,
+            )
+        except ClientError as error:
+            print("SELL order failed:", error.error_message)
+            return
 
+        sold = float(response["executedQty"])
+        for_quote = float(response["cummulativeQuoteQty"])
+        actual_price = for_quote / sold
         self.base -= sold
-        self.quote += sold * self.last_price * 0.999
-        # print(f"Sold {sold:.8f} BTC at {self.last_price:.2f} EUR.")
+        self.quote += for_quote
+        self.order_history.append(response)
+        heappop(self.buy_heap)
 
-        order = dict(signal=FlipSignals.SELL, price=self.last_price, time=self.last_timestamp)
-        self.order_history.append(order)
+        print(f"Sold {sold:.8f} {self.base_symbol} at {actual_price:.8f} {self.quote_symbol} [{for_quote:.8f} {self.quote_symbol}]")
 
     def preload(self, limit=1000):
-        data = client.klines(self.symbol, "1m", limit=limit)
+        data = self.client.klines(self.symbol, "1m", limit=limit)
         price_cache = f"{self.symbol}_price.dat"
         with open(price_cache, "wb") as data_file:
             pickle.dump(data, data_file)
@@ -237,20 +272,23 @@ class Flipper:
         if self.order_history:
             initial_buyin = (self.budget / self.buyin_price) * 0.999
             buyin_value = initial_buyin * self.last_price * 0.999
-            print(f" -- HOLD strategy buy {self.buyin_price:.2f} vs sell {self.last_price:.2f}\t\t==> {buyin_value:.2f} EUR <==")
-        print(f" -- after {len(self.order_history)} transactions")
-        print(f" -- {self.base:.8f} BTC, {self.quote:.2f} EUR \t\t\t\t==> {self.base * self.last_price * 0.999 + self.quote:.2f} EUR <==")
+            print(" -- BUY and HOLD (entry vs exit price) --")
+            print(f" {self.buyin_price:.8f} {self.quote_symbol} -:- {self.last_price:.8f} {self.quote_symbol} \t\t==> {buyin_value:.8f} {self.quote_symbol} <==")
+        print(f" -- ALGO strategy (after {len(self.order_history)} transactions) --")
+        print(f" {self.base:.8f} {self.base_symbol} + {self.quote:.8f} {self.quote_symbol} \t\t\t==> {self.base * self.last_price * 0.999 + self.quote:.8f} {self.quote_symbol} <==")
+
 
     def tick(self):
         data = self.client.klines(self.symbol, "1m", startTime=self.last_timestamp)
         self.feed_klines(deque(data))
         signal = self.compute_signal()
 
+        amount = self.budget / 10
         if signal == FlipSignals.BUY:
-            self.buy(100)
+            self.buy(amount)
             self.show_me_the_money()
         elif signal == FlipSignals.SELL:
-            self.sell(100)
+            self.sell(amount)
             self.show_me_the_money()
 
         print(".", end="", flush=True)
@@ -279,19 +317,21 @@ class Flipper:
 
 def main(client):
 
-    symbol = "BTCEUR"
-    data = client.klines(symbol, "1m", limit=1000)
-    with open(f"{symbol}_price.dat", "wb") as data_file:
-        pickle.dump(data, data_file)
+    # STOP the orders are real
+    # symbol = "BTCEUR"
+    # data = client.klines(symbol, "1m", limit=1000)
+    # with open(f"{symbol}_price.dat", "wb") as data_file:
+    #     pickle.dump(data, data_file)
 
-    flippy = Flipper(client, symbol, 1000)
-    flippy.preload()
-    flippy.show_me_the_money()
+    # flippy = Flipper(client, symbol, 1000)
+    # flippy.preload()
+    # flippy.show_me_the_money()
 
-    schedule.every().minute.at(":13").do(lambda: flippy.tick())
-    while True:
-        schedule.run_pending()
-        time.sleep(0.618033988749894)
+    # schedule.every().minute.at(":13").do(lambda: flippy.tick())
+    # while True:
+    #     schedule.run_pending()
+    #     time.sleep(0.618033988749894)
+    pass
 
 
 if __name__ == "__main__":
