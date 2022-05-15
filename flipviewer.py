@@ -13,8 +13,8 @@ class FlipViewer:
     def __init__(self, symbol):
         self.symbol = symbol
         # self.factor = 1.61803398875
-        self.factor = 1.9
-        self.window = 28
+        self.factor = 2.2
+        self.window = 14
 
         # load price history
         price_data = None

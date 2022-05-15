@@ -3,22 +3,22 @@
 import pickle
 import os
 import configparser
-from binance.spot import Spot
-from datetime import datetime, timedelta
-from dataclasses import dataclass
-from collections import namedtuple
-from statistics import stdev, mean
-from enum import Enum
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import schedule
 import time
+from binance.spot import Spot
+from datetime import datetime, timedelta
+from statistics import stdev, mean
+from collections import deque
+from heapq import heappush, heappop
+from metaflip import FlipSignals, KLinePoint, PricePoint
 
 
 CREDENTIALS_CACHE = "credentials.ini"
 
 
-def init():
+def make_binance_client():
     credentials = configparser.ConfigParser()
     if os.path.isfile(CREDENTIALS_CACHE):
         credentials.read(CREDENTIALS_CACHE)
@@ -37,118 +37,60 @@ def init():
     return client
 
 
-KLinePoint = namedtuple(
-    "KLinePoint",
-    [
-        "open_time",
-        "open",
-        "high",
-        "low",
-        "close",
-        "volume",
-        "close_time",
-        "quote_asset_volume",
-        "trades_count",
-        "taker_buy_base_asset_volume",
-        "taker_buy_quote_asset_volume",
-        "ignore",
-    ],
-)
-
-
-@dataclass
-class PricePoint:
-    open_time: datetime
-    open: float
-    close: float
-    close_time: datetime
-
-    def __init__(self, kline_data):
-        kpoint = KLinePoint(*kline_data)
-        self.open_time = datetime.fromtimestamp(kpoint.open_time // 1000)
-        self.open = float(kpoint.open)
-        self.close = float(kpoint.low)
-        self.close_time = datetime.fromtimestamp(kpoint.close_time // 1000)
-
-
-def load_last_24h(client, symbol):
-    time_data = client.time()
-    data = client.klines(symbol, "1m", limit=1000)
-    return data
-
-
-def discrete_derivatives(y, open):
-    yy = [open] + y
-    length = len(yy)
-    first = [yy[i1] - yy[i0] for i0, i1 in zip(range(length - 1), range(1, length))]
-    return first
-
-
-def bollinger_bands(samples, window=7):
-    # factor = 2.61803398875
-    factor = 2.3
-    # factor = 1.61803398875
-    roll_mean = [samples[0]]
-    low = [samples[0]]
-    high = [samples[0]]
-    roll_stdev = [0.0]
-
-    for right in range(1, len(samples)):
-        left = max(right - 20, 0)
-        mm = mean(samples[left : right + 1])
-        std = stdev(samples[left : right + 1])
-        roll_mean.append(mm)
-        low.append(mm - factor * std)
-        high.append(mm + factor * std)
-        roll_stdev.append(factor * std)
-    return (roll_mean, low, high, roll_stdev)
-
-
-def digest_signals(timeline, price, distance, bb_stdev):
-    markers = []
-    length = len(timeline)
-    for i in range(length):
-        if distance[i] >= bb_stdev[i]:
-            markers.append((timeline[i], price[i], "SELL"))
-        elif distance[i] <= -bb_stdev[i]:
-            markers.append((timeline[i], price[i], "BUY"))
-
-    return markers
-
-
-class FlipSignals(Enum):
-    HOLD = 0
-    ENTRY = 1
-    SELL = 2
-    BUY = 3
-    EXIT = 4
-
-
 class Flipper:
-    def __init__(self, symbol, budget, data):
+    def __init__(self, client, symbol, budget):
+        self.client = client
         self.symbol = symbol
         self.budget = budget
+        self.quote = budget
+        self.base = 0
+        self.buy_heap = list()
+        self.buyin_price = None
         self.follow_up = None
 
-        # self.factor = 2.61803398875
-        self.factor = 1.9
-        # self.factor = 1.61803398875
-        self.window = 28
+        self.window = 21
+        self.factor = 2.1
 
-        assert len(data) > self.window, "Data feed is shorter than the window"
+        self.order_history = list()
+        self.prices = list()
+        self.timeline = list()
+        self.velocity = list()
+        self.bb_mean = list()
+        self.bb_stdev = list()
+        self.bb_low = list()
+        self.bb_high = list()
 
-        first = PricePoint(data[0])
+        self.last_kline = None
+
+    def _consume_first(self, kline_data):
+        self.last_kline = KLinePoint(*kline_data)
+        first = PricePoint(kline_data)
+        self.prices.append(first.close)
+        self.timeline.append(first.close_time)
+        self.velocity.append(first.close - first.open)
+        self.bb_mean.append(mean([first.open, first.close]))
+        self.bb_stdev.append(stdev([first.open, first.close]))
+        self.bb_low.append(min([first.open, first.close]))
+        self.bb_high.append(max([first.open, first.close]))
+
+    def feed_klines(self, data):
+        if not data:
+            print("provided data seems empty, feeding skipped.")
+            return
+
+        if len(self.prices) == 0:
+            self._consume_first(data.popleft())
+
+        start_at = len(self.prices)
+
         klines = [KLinePoint(*x) for x in data]
-        self.prices = [float(x.close) for x in klines]
-        self.timeline = [datetime.fromtimestamp(x.close_time // 1000) for x in klines]
-        self.velocity = [first.close - first.open]
+        if klines:
+            self.last_kline = klines[-1]
 
-        self.bb_mean = [mean([first.open, first.close])]
-        self.bb_stdev = [stdev([first.open, first.close])]
-        self.bb_low = [min([first.open, first.close])]
-        self.bb_high = [max([first.open, first.close])]
+        self.prices.extend([float(x.close) for x in klines])
+        self.timeline.extend([datetime.fromtimestamp(x.close_time // 1000) for x in klines])
 
-        for right in range(1, len(self.prices)):
+        for right in range(start_at, len(self.prices)):
             left = max(right - self.window, 0)
             mm = mean(self.prices[left : right + 1])
             std = stdev(self.prices[left : right + 1])
@@ -159,11 +101,8 @@ class Flipper:
             self.bb_low.append(mm - self.factor * std)
             self.velocity.append(self.prices[right] - self.prices[right - 1])
 
-        self.last_kline = klines[-1]
-
-
     def draw_trading_chart(self, limit=1000):
-        since = len(self.prices) - limit
+        since = max(len(self.prices) - limit, 0)
         fig, axes = plt.subplots(1, 1, sharex=True)
 
         axes.plot(
@@ -183,44 +122,41 @@ class Flipper:
         for label in axes.get_xticklabels(which="major"):
             label.set(rotation=45, horizontalalignment="right")
 
-        timed = self.timeline[-1].strftime("%Y-%m-%d_%H:%M:%S")
-        plt.savefig(f"{self.symbol}_chart_{timed}.png", dpi=600)
+        for order in self.order_history:
+            signal, price, timestamp = order.values()
+            mark_time = datetime.fromtimestamp(timestamp // 1000)
+            axes.annotate(
+                signal.name,
+                xy=(mark_time, price),
+                fontsize="large",
+                xytext=((0.0, +34.0) if signal == FlipSignals.SELL else (0.0, -34.0)),
+                textcoords="offset pixels",
+                color="green" if signal == FlipSignals.SELL else "red",
+                horizontalalignment="center",
+                verticalalignment="center",
+                arrowprops=dict(arrowstyle="->"),
+            )
+
+        # timed = self.timeline[-1].strftime("%Y-%m-%d_%H:%M:%S")
+        # plt.savefig(f"{self.symbol}_chart_{timed}.png", dpi=600)
+        plt.show()
         plt.close()
 
     @property
     def last_price(self):
-        return float(self.last_kline.close)
+        return self.prices[-1]
 
     @property
     def last_timestamp(self):
         return self.last_kline.close_time
 
-    def feed_klines(self, data):
-        if not data:
-            print("provided data seems empty, feeding skipped.")
-            return
+    def compute_signal(self):
+        """trigger signal base on last point only"""
 
-        start_at = len(self.prices)
-        klines = [KLinePoint(*x) for x in data]
-        self.prices.extend([float(x.close) for x in klines])
-        self.timeline.extend([datetime.fromtimestamp(x.close_time // 1000) for x in klines])
+        if len(self.prices) < self.window:
+            # print(f"{len(self.prices)} datapoints are not enough for a {self.window} window.")
+            return FlipSignals.HOLD
 
-        cnt = 0
-        for right in range(start_at, len(self.prices)):
-            left = max(right - self.window, 0)
-            mm = mean(self.prices[left : right + 1])
-            std = stdev(self.prices[left : right + 1])
-
-            self.bb_stdev.append(self.factor * std)
-            self.bb_mean.append(mm)
-            self.bb_high.append(mm + self.factor * std)
-            self.bb_low.append(mm - self.factor * std)
-            self.velocity.append(self.prices[right] - self.prices[right - 1])
-            cnt += 1
-
-        self.last_kline = klines[-1]
-
-        # trigger signal base on last point only
         price = self.prices[-1]
         mm = self.bb_mean[-1]
         mdev = self.bb_stdev[-1]
@@ -250,158 +186,114 @@ class Flipper:
 
         return signal
 
+    def buy(self, amount):
 
-def magic_graphs(data, symbol):
-    klines = [KLinePoint(*x) for x in data]
-    timeline = [datetime.fromtimestamp(x.close_time // 1000) for x in klines]
-    price = [float(x.close) for x in klines]
-    bb_mean, bb_high, bb_low, bb_stdev = bollinger_bands(price)
+        if self.quote < amount:
+            print(f"Cannot buy, {self.quote:.2f} EUR is not enough to buy {amount:.8f}")
+            return
 
-    fig, axes = plt.subplots(2, 1, sharex=True)
+        if not self.buyin_price:
+            self.buyin_price = self.last_price
 
-    axes[0].plot(
-        timeline, price, "b.-",
-        # timeline, bb_high, "r,-",
-        # timeline, bb_low, "g,-",
-        timeline, bb_mean, "y,-",
-    )
-    axes[0].xaxis.set_major_locator(mdates.HourLocator(interval=2))
-    axes[0].xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
-    axes[0].xaxis.set_minor_locator(mdates.MinuteLocator(interval=10))
-    axes[0].grid(visible=True, which="both")
-    axes[0].set_title(symbol)
+        self.quote -= amount
+        bought = (amount / self.last_price) * 0.999
+        self.base += bought
+        # print(f"Bought {bought:.8f} BTC at {self.last_price:.2f} EUR.")
 
-    for label in axes[0].get_xticklabels(which="major"):
-        label.set(rotation=45, horizontalalignment="right")
+        order = dict(signal=FlipSignals.BUY, price=self.last_price, time=self.last_timestamp)
+        self.order_history.append(order)
+        heappush(self.buy_heap, self.last_price)
 
-    distance = [p - m for p, m in zip(price, bb_mean)]
-    bb_stdev_opp = [-x for x in bb_stdev]
-    axes[1].plot(
-        timeline, distance, "m.:",
-        timeline, bb_stdev, "g,--",
-        timeline, bb_stdev_opp, "r,--",
-    )
-    axes[1].set_ylabel("distance")
-    axes[1].grid(visible=True, which="both")
+    def sell(self, amount):
+        sold = amount / self.last_price
+        if (sold > self.base):
+            print(f"Cannot sell {sold:.8f} BTC, when only {self.base:.8f} is available")
+            return
 
-    signals = digest_signals(timeline, price, distance, bb_stdev)
-    for sig in signals:
-        x, y, msg = sig
+        cheapest = self.buy_heap[0]
+        if self.last_price < (cheapest * 1.01):
+            print(f"Cannot sell without profit, {self.last_price} < {cheapest}")
+            return
 
-        axes[0].annotate(
-            msg,
-            xy=(x, y),
-            fontsize="large",
-            xytext=((0.0, +34.0) if msg == "SELL" else (0.0, -34.0)),
-            textcoords="offset pixels",
-            color="green" if msg == "SELL" else "red",
-            horizontalalignment="center",
-            verticalalignment="center",
-            arrowprops=dict(arrowstyle="->"),
-        )
+        cheapest = heappop(self.buy_heap)
 
-    plt.show()
+        self.base -= sold
+        self.quote += sold * self.last_price * 0.999
+        # print(f"Sold {sold:.8f} BTC at {self.last_price:.2f} EUR.")
 
+        order = dict(signal=FlipSignals.SELL, price=self.last_price, time=self.last_timestamp)
+        self.order_history.append(order)
 
-symbol = "BTCEUR"
-price_cache = f"{symbol}_price.dat"
-orders_cache = f"{symbol}_orders.dat"
-data = None
-flippy = None
-order_history = list()
-holdings = 0.017532
-currency = 484.0
+    def preload(self, limit=1000):
+        data = client.klines(self.symbol, "1m", limit=limit)
+        price_cache = f"{self.symbol}_price.dat"
+        with open(price_cache, "wb") as data_file:
+            pickle.dump(data, data_file)
 
+        self.feed_klines(deque(data))
 
-def tick():
-    global currency
-    global holdings
-    global order_history
+    def show_me_the_money(self):
+        print("\n")
+        if self.order_history:
+            initial_buyin = (self.budget / self.buyin_price) * 0.999
+            buyin_value = initial_buyin * self.last_price * 0.999
+            print(f" -- HOLD strategy buy {self.buyin_price:.2f} vs sell {self.last_price:.2f}\t\t==> {buyin_value:.2f} EUR <==")
+        print(f" -- after {len(self.order_history)} transactions")
+        print(f" -- {self.base:.8f} BTC, {self.quote:.2f} EUR \t\t\t\t==> {self.base * self.last_price * 0.999 + self.quote:.2f} EUR <==")
 
-    since = flippy.last_timestamp
-    new_data = client.klines(symbol=symbol, interval="1m", startTime=since)
-
-    if (new_data):
-        signal = flippy.feed_klines(new_data)
-        print(".", end="", flush=True)
+    def tick(self):
+        data = self.client.klines(self.symbol, "1m", startTime=self.last_timestamp)
+        self.feed_klines(deque(data))
+        signal = self.compute_signal()
 
         if signal == FlipSignals.BUY:
-            print("\n* Flippy says BUY")
-            if currency >= 25.0:
-                bought = (25.0 / flippy.last_price) * 0.999
-                currency -= 25.0
-                holdings += bought
-                print(f"Bought {bought:.6f} at {flippy.last_price:.6f}.")
-            else:
-                print("Not enough currency")
-
-            total = holdings * flippy.last_price + currency
-            print(f"\t --> {holdings:.6f} and {currency:.6f}, valued at {total:.6f}")
-
+            self.buy(100)
+            self.show_me_the_money()
         elif signal == FlipSignals.SELL:
-            print("\n* Flippy says SELL")
-            sold = (25.0 / flippy.last_price)
-            if (sold <= holdings):
-                holdings -= sold
-                currency += sold * flippy.last_price * 0.999
-                print(f"Sold {sold:.6f} at {flippy.last_price:.6f}.")
-            else:
-                print(f"Not enough holding to sell {sold:.6f}, available {holdings:.6f}")
+            self.sell(100)
+            self.show_me_the_money()
 
-            total = holdings * flippy.last_price + currency
-            print(f"\t --> {holdings:.6f} and {currency:.6f}, valued at {total:.6f}")
+        print(".", end="", flush=True)
 
 
-        data.extend(new_data)
-        with open(price_cache, "wb") as data_file:
-            pickle.dump(data, data_file)
+    def backtest(self, amount):
+        price_cache = f"{self.symbol}_price.dat"
+        if os.path.isfile(price_cache):
+            print(f"Reading {price_cache}...")
+            with open(price_cache, "rb") as data_file:
+                data = pickle.load(data_file)
 
-        if signal != FlipSignals.HOLD:
+        for kline_data in data:
+            self.feed_klines(deque([kline_data]))
+            signal = self.compute_signal()
 
-            order = dict(signal=signal, price=flippy.last_price, time=flippy.last_timestamp)
-            order_history.append(order)
-            with open(orders_cache, "wb") as data_file:
-                pickle.dump(order_history, data_file)
+            if signal == FlipSignals.BUY:
+                self.buy(amount)
+            elif signal == FlipSignals.SELL:
+                self.sell(amount)
 
-    # flippy.draw_trading_chart(limit=200)
+        print(self.buy_heap)
 
+        self.show_me_the_money()
+        self.draw_trading_chart()
 
 def main(client):
-    global flippy  ## horrible I know
-    global data
-    global order_history
 
-    # load price history
-    if os.path.isfile(price_cache):
-        print(f"Using local cache ({price_cache})...")
-        with open(price_cache, "rb") as data_file:
-            data = pickle.load(data_file)
-    else:
-        print("Reading last 24h")
-        data = load_last_24h(client, symbol)
-        with open(price_cache, "wb") as data_file:
-            pickle.dump(data, data_file)
-            print("cached to", price_cache)
+    symbol = "BTCEUR"
+    data = client.klines(symbol, "1m", limit=1000)
+    with open(f"{symbol}_price.dat", "wb") as data_file:
+        pickle.dump(data, data_file)
 
-    # load order history
-    if os.path.isfile(orders_cache):
-        print(f"Using local cache ({orders_cache})...")
-        with open(orders_cache, "rb") as data_file:
-            order_history = pickle.load(data_file)
+    flippy = Flipper(client, symbol, 1000)
+    flippy.preload()
+    flippy.show_me_the_money()
 
-    budget = "0.002"
-    flippy = Flipper(symbol, budget, data)
-
-    total = holdings * flippy.last_price + currency
-    print(f"\t --> {holdings:.6f} and {currency:.6f}, valued at {total:.6f}")
-
-
-    schedule.every().minute.at(":13").do(tick)
+    schedule.every().minute.at(":13").do(lambda: flippy.tick())
     while True:
         schedule.run_pending()
-        time.sleep(1)
+        time.sleep(0.618033988749894)
 
 
 if __name__ == "__main__":
-    client = init()
+    client = make_binance_client()
     main(client)
