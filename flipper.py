@@ -1,12 +1,7 @@
-#!/usr/bin/env python3
-
 import pickle
 import os
-import configparser
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
-import schedule
-import time
 from binance.spot import Spot
 from binance.error import ClientError
 from datetime import datetime
@@ -16,30 +11,8 @@ from heapq import heappush, heappop
 from metaflip import FlipSignals, KLinePoint, PricePoint
 
 
-CREDENTIALS_CACHE = "credentials.ini"
-
-
-def make_binance_client():
-    credentials = configparser.ConfigParser()
-    if os.path.isfile(CREDENTIALS_CACHE):
-        credentials.read(CREDENTIALS_CACHE)
-    else:
-        empty = dict(api_key="", secret="")
-        with open(CREDENTIALS_CACHE, "wt") as storage:
-            credentials["binance"] = empty
-            credentials.write(storage)
-        raise RuntimeError(
-            f"Created empty {CREDENTIALS_CACHE}, please fill in and run again."
-        )
-
-    assert "binance" in credentials.sections()
-    client = Spot(**dict(credentials.items("binance")))
-
-    return client
-
-
 class Flipper:
-    def __init__(self, client, symbol, budget):
+    def __init__(self, client: Spot, symbol, budget):
         self.client = client
         self.symbol = symbol
         self.budget = budget
@@ -50,7 +23,7 @@ class Flipper:
         self.follow_up = None
 
         self.window = 21
-        self.factor = 2.1
+        self.factor = 1.9
 
         self.order_history = list()
         self.prices = list()
@@ -314,26 +287,3 @@ class Flipper:
 
         self.show_me_the_money()
         self.draw_trading_chart()
-
-def main(client):
-
-    # STOP the orders are real
-    # symbol = "BTCEUR"
-    # data = client.klines(symbol, "1m", limit=1000)
-    # with open(f"{symbol}_price.dat", "wb") as data_file:
-    #     pickle.dump(data, data_file)
-
-    # flippy = Flipper(client, symbol, 1000)
-    # flippy.preload()
-    # flippy.show_me_the_money()
-
-    # schedule.every().minute.at(":13").do(lambda: flippy.tick())
-    # while True:
-    #     schedule.run_pending()
-    #     time.sleep(0.618033988749894)
-    pass
-
-
-if __name__ == "__main__":
-    client = make_binance_client()
-    main(client)
