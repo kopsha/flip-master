@@ -46,6 +46,12 @@ class Flipper:
         self.base_symbol = info["baseAsset"]
         self.quote_symbol = info["quoteAsset"]
 
+        print(info)
+
+        print(
+            f".: New {self.base_symbol} / {self.quote_symbol} trader, budget {self.budget} {self.quote_symbol}"
+        )
+
     def _consume_first(self, kline_data):
         self.last_kline = KLinePoint(*kline_data)
         first = PricePoint(kline_data)
@@ -72,7 +78,9 @@ class Flipper:
             self.last_kline = klines[-1]
 
         self.prices.extend([float(x.close) for x in klines])
-        self.timeline.extend([datetime.fromtimestamp(x.close_time // 1000) for x in klines])
+        self.timeline.extend(
+            [datetime.fromtimestamp(x.close_time // 1000) for x in klines]
+        )
 
         for right in range(start_at, len(self.prices)):
             left = max(right - self.window, 0)
@@ -90,10 +98,18 @@ class Flipper:
         fig, axes = plt.subplots(1, 1, sharex=True)
 
         axes.plot(
-            self.timeline[since:], self.bb_high[since:], "r,:",
-            self.timeline[since:], self.bb_low[since:], "g,:",
-            self.timeline[since:], self.bb_mean[since:], "y,:",
-            self.timeline[since:], self.prices[since:], "b,-",
+            self.timeline[since:],
+            self.bb_high[since:],
+            "r,:",
+            self.timeline[since:],
+            self.bb_low[since:],
+            "g,:",
+            self.timeline[since:],
+            self.bb_mean[since:],
+            "y,:",
+            self.timeline[since:],
+            self.prices[since:],
+            "b,-",
             linewidth=0.5,
         )
 
@@ -128,7 +144,7 @@ class Flipper:
 
     @property
     def last_price(self):
-        return self.prices[-1]
+        return self.prices[-1] if self.prices else 0
 
     @property
     def last_timestamp(self):
@@ -173,7 +189,9 @@ class Flipper:
     def buy(self, amount):
 
         if self.quote < (amount * 0.99):
-            print(f"Cannot buy, {self.quote:.8f} {self.quote_symbol} is not enough to buy {amount:.8f} {self.base_symbol}")
+            print(
+                f"Cannot buy, {self.quote:.8f} {self.quote_symbol} is not enough to buy {amount:.8f} {self.base_symbol}"
+            )
             return
 
         if not self.buyin_price:
@@ -196,14 +214,18 @@ class Flipper:
         self.quote -= for_quote
         self.base += bought
         self.order_history.append(response)
-        heappush(self.buy_heap, actual_price*0.8)
+        heappush(self.buy_heap, actual_price * 0.8)
 
-        print(f"Bought {bought:.8f} {self.base_symbol} at {actual_price:.8f} {self.quote_symbol} [{for_quote:.8f} {self.quote_symbol}]")
+        print(
+            f"Bought {bought:.8f} {self.base_symbol} at {actual_price:.8f} {self.quote_symbol} [{for_quote:.8f} {self.quote_symbol}]"
+        )
 
     def sell(self, amount):
         est_sold = 0.99 * amount / self.last_price
-        if (est_sold > self.base):
-            print(f"Cannot sell {est_sold:.8f} {self.base_symbol}, when only {self.base:.8f} is available")
+        if est_sold > self.base:
+            print(
+                f"Cannot sell {est_sold:.8f} {self.base_symbol}, when only {self.base:.8f} is available"
+            )
             return
 
         cheapest = self.buy_heap[0]
@@ -230,7 +252,9 @@ class Flipper:
         self.order_history.append(response)
         heappop(self.buy_heap)
 
-        print(f"Sold {sold:.8f} {self.base_symbol} at {actual_price:.8f} {self.quote_symbol} [{for_quote:.8f} {self.quote_symbol}]")
+        print(
+            f"Sold {sold:.8f} {self.base_symbol} at {actual_price:.8f} {self.quote_symbol} [{for_quote:.8f} {self.quote_symbol}]"
+        )
 
     def preload(self, limit=1000):
         data = self.client.klines(self.symbol, "1m", limit=limit)
@@ -241,15 +265,23 @@ class Flipper:
         self.feed_klines(deque(data))
 
     def show_me_the_money(self):
-        print("\n")
+        print("")
         if self.order_history:
             initial_buyin = (self.budget / self.buyin_price) * 0.999
             buyin_value = initial_buyin * self.last_price * 0.999
-            print(" -- BUY and HOLD (entry vs exit price) --")
-            print(f" {self.buyin_price:.8f} {self.quote_symbol} -:- {self.last_price:.8f} {self.quote_symbol} \t\t==> {buyin_value:.8f} {self.quote_symbol} <==")
-        print(f" -- ALGO strategy (after {len(self.order_history)} transactions) --")
-        print(f" {self.base:.8f} {self.base_symbol} + {self.quote:.8f} {self.quote_symbol} \t\t\t==> {self.base * self.last_price * 0.999 + self.quote:.8f} {self.quote_symbol} <==")
+            print(".: Buy-in strategy (entry vs exit)")
+            print(
+                f" {self.buyin_price:.8f} {self.quote_symbol} -:- {self.last_price:.8f} {self.quote_symbol} \t\t==> {buyin_value:.8f} {self.quote_symbol} <=="
+            )
+        else:
+            print("   No transactions yet.")
 
+        print(
+            f".: Auto-flip strategy (after {len(self.order_history)} transactions) --"
+        )
+        print(
+            f"   {self.base:.8f} {self.base_symbol} + {self.quote:.8f} {self.quote_symbol} \t\t\t==> {self.base * self.last_price * 0.999 + self.quote:.8f} {self.quote_symbol} <=="
+        )
 
     def tick(self):
         data = self.client.klines(self.symbol, "1m", startTime=self.last_timestamp)
@@ -265,7 +297,6 @@ class Flipper:
             self.show_me_the_money()
 
         print(".", end="", flush=True)
-
 
     def backtest(self, amount):
         price_cache = f"{self.symbol}_price.dat"

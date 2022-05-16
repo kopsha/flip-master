@@ -24,6 +24,7 @@ def make_binance_client():
 
     return client
 
+
 def make_binance_test_client():
     credentials = configparser.ConfigParser()
     if os.path.isfile(CREDENTIALS_CACHE):
@@ -38,6 +39,9 @@ def make_binance_test_client():
         )
 
     assert "binance-test" in credentials.sections()
-    client = Spot(**dict(credentials.items("binance-test")), base_url="https://testnet.binance.vision")
+    client = Spot(
+        **dict(credentials.items("binance-test")),
+        base_url="https://testnet.binance.vision",
+    )
 
     return client

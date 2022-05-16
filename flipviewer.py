@@ -26,7 +26,6 @@ class FlipViewer:
         else:
             raise FileNotFoundError(f"Cannot open {prices_cache} for reading.")
 
-
         assert len(price_data) > self.window, "Data feed is shorter than the window"
 
         first = PricePoint(price_data[0])
@@ -70,9 +69,15 @@ class FlipViewer:
         fig, axes = plt.subplots(1, 1, sharex=True)
 
         axes.plot(
-            self.timeline, self.bb_high, "r,:",
-            self.timeline, self.bb_low, "g,:",
-            self.timeline, self.prices, "b,-",
+            self.timeline,
+            self.bb_high,
+            "r,:",
+            self.timeline,
+            self.bb_low,
+            "g,:",
+            self.timeline,
+            self.prices,
+            "b,-",
             linewidth=0.5,
         )
 
@@ -100,7 +105,6 @@ class FlipViewer:
                 arrowprops=dict(arrowstyle="->"),
             )
 
-
         # plt.savefig(f"{self.symbol}_chart_{timed}.png", dpi=600)
         plt.show()
         plt.close()
@@ -122,7 +126,7 @@ class FlipViewer:
 
         def sell(base, quote, step, price):
             sold = step / price
-            if (sold <= base):
+            if sold <= base:
                 base -= sold
                 quote += sold * price * 0.999
                 print(f"Sold {sold:.6f} BTC at {price:.6f} EUR.")
@@ -130,7 +134,6 @@ class FlipViewer:
                 print(f"Not enough assets to sell {sold:.6f}, available {base:.6f}")
 
             return base, quote
-
 
         # on entry buy 50%
         entry = self.orders[0]
@@ -142,7 +145,9 @@ class FlipViewer:
         entry_price = entry["price"]
 
         price = entry["price"]
-        print(f"== {base:.6f} BTC -- {quote:.6f} EUR -- valued at {base * price * 0.999 + quote:.6f} EUR")
+        print(
+            f"== {base:.6f} BTC -- {quote:.6f} EUR -- valued at {base * price * 0.999 + quote:.6f} EUR"
+        )
 
         for order in self.orders[1:]:
             signal, price, _ = order.values()
@@ -152,15 +157,19 @@ class FlipViewer:
             elif signal == FlipSignals.SELL:
                 base, quote = sell(base, quote, step, price)
 
-            print(f"{base:.6f} BTC -- {quote:.6f} EUR -- valued at {base * price * 0.999 + quote:.6f} EUR")
+            print(
+                f"{base:.6f} BTC -- {quote:.6f} EUR -- valued at {base * price * 0.999 + quote:.6f} EUR"
+            )
 
         last_price = self.orders[-1]["price"]
         # compare just holding...
         print(f"Entry price {entry_price} vs {last_price}")
-        print(f"Entry value: {entry_base:.6f} BTC -- {entry_quote:.6f} EUR -- valued at {entry_base * entry_price * 0.999 + entry_quote:.6f} EUR")
-        print(f"Hold value: {entry_base:.6f} BTC -- {entry_quote:.6f} EUR -- valued at {entry_base * last_price * 0.999 + entry_quote:.6f} EUR")
-
-
+        print(
+            f"Entry value: {entry_base:.6f} BTC -- {entry_quote:.6f} EUR -- valued at {entry_base * entry_price * 0.999 + entry_quote:.6f} EUR"
+        )
+        print(
+            f"Hold value: {entry_base:.6f} BTC -- {entry_quote:.6f} EUR -- valued at {entry_base * last_price * 0.999 + entry_quote:.6f} EUR"
+        )
 
 
 def main():

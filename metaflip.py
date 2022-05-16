@@ -24,10 +24,13 @@ KLinePoint = namedtuple(
     ],
 )
 
+AssetMeta = namedtuple("AssetMeta", ["symbol", "precision"])
+
 
 @dataclass
 class PricePoint:
     """Main flippie data structure"""
+
     open_time: datetime
     open: float
     close: float

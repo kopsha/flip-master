@@ -9,7 +9,7 @@ import time
 
 def main(client: Spot):
 
-    symbol = "ETHUSDT"
+    symbol = "TRXBUSD"
 
     flippy = Flipper(client, symbol, 1000)
     flippy.preload()
