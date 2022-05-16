@@ -24,6 +24,7 @@ KLinePoint = namedtuple(
     ],
 )
 
+
 AssetMeta = namedtuple("AssetMeta", ["symbol", "precision"])
 
 

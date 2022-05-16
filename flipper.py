@@ -8,7 +8,7 @@ from datetime import datetime
 from statistics import stdev, mean
 from collections import deque
 from heapq import heappush, heappop
-from metaflip import FlipSignals, KLinePoint, PricePoint
+from metaflip import FlipSignals, KLinePoint, PricePoint, AssetMeta
 
 
 class Flipper:
@@ -41,15 +41,27 @@ class Flipper:
         assert account_data["takerCommission"] == self.commission
 
         info_data = client.exchange_info(symbol)
-        assert len(info_data["symbols"]) == 1
+        assert (
+            len(info_data["symbols"]) == 1
+        ), f"The {symbol} pair points to {len(info_data['symbols'])}, instead of one."
         info = info_data["symbols"].pop()
-        self.base_symbol = info["baseAsset"]
-        self.quote_symbol = info["quoteAsset"]
 
-        print(info)
+        self.base_meta = AssetMeta(
+            info["baseAsset"],
+            info["baseAssetPrecision"],
+        )
+        self.quote_meta = AssetMeta(
+            info["quoteAsset"],
+            info["quoteAssetPrecision"],
+        )
 
         print(
-            f".: New {self.base_symbol} / {self.quote_symbol} trader, budget {self.budget} {self.quote_symbol}"
+            ".: New {left} / {right} trader, budget {budget:.{prec}f} {right}".format(
+                left=self.base_meta.symbol,
+                right=self.quote_meta.symbol,
+                budget=budget,
+                prec=self.quote_meta.precision,
+            )
         )
 
     def _consume_first(self, kline_data):
@@ -65,7 +77,7 @@ class Flipper:
 
     def feed_klines(self, data):
         if not data:
-            print("provided data seems empty, feeding skipped.")
+            print(".: KLines feed seems empty, skipped.")
             return
 
         if len(self.prices) == 0:
@@ -190,7 +202,14 @@ class Flipper:
 
         if self.quote < (amount * 0.99):
             print(
-                f"Cannot buy, {self.quote:.8f} {self.quote_symbol} is not enough to buy {amount:.8f} {self.base_symbol}"
+                "x: Cannot buy {amount:.{base_prec}f} {base_symbol}, available {quote:.{quote_prec}f} {quote_symbol} is not enough.".format(
+                    amount=amount,
+                    quote=self.quote,
+                    base_prec=self.base_meta.precision,
+                    base_symbol=self.base_meta.symbol,
+                    quote_prec=self.quote_meta.precision,
+                    quote_symbol=self.quote_meta.symbol,
+                )
             )
             return
 
@@ -205,7 +224,7 @@ class Flipper:
                 quoteOrderQty=amount,
             )
         except ClientError as error:
-            print("BUY order failed:", error.error_message)
+            print("x: BUY order failed:", error.error_message)
             return
 
         bought = float(response["executedQty"])
@@ -214,23 +233,36 @@ class Flipper:
         self.quote -= for_quote
         self.base += bought
         self.order_history.append(response)
-        heappush(self.buy_heap, actual_price * 0.8)
+        heappush(self.buy_heap, actual_price)
 
         print(
-            f"Bought {bought:.8f} {self.base_symbol} at {actual_price:.8f} {self.quote_symbol} [{for_quote:.8f} {self.quote_symbol}]"
+            ".: Bought {bought:.{base_prec}f} {base_symbol} at {price:.{quote_prec}f} {quote_symbol} [{for_quote:.{quote_prec}f} {quote_symbol}]".format(
+                bought=bought,
+                price=actual_price,
+                for_quote=for_quote,
+                base_prec=self.base_meta.precision,
+                base_symbol=self.base_meta.symbol,
+                quote_prec=self.quote_meta.precision,
+                quote_symbol=self.quote_meta.symbol,
+            )
         )
 
     def sell(self, amount):
         est_sold = 0.99 * amount / self.last_price
         if est_sold > self.base:
             print(
-                f"Cannot sell {est_sold:.8f} {self.base_symbol}, when only {self.base:.8f} is available"
+                "x: Cannot sell {sold:.{base_prec}f} {base_symbol}, only {base:.{base_prec}f} is available".format(
+                    sold=est_sold,
+                    base=self.base,
+                    base_prec=self.base_meta.precision,
+                    base_symbol=self.base_meta.symbol,
+                )
             )
             return
 
         cheapest = self.buy_heap[0]
         if self.last_price <= (cheapest * 1.001):
-            print(f"Cannot sell without profit, {self.last_price} < {cheapest}")
+            print(f"x: Cannot sell without profit, {self.last_price} < {cheapest}")
             return
 
         try:
@@ -241,7 +273,7 @@ class Flipper:
                 quoteOrderQty=amount,
             )
         except ClientError as error:
-            print("SELL order failed:", error.error_message)
+            print("x: SELL order failed:", error.error_message)
             return
 
         sold = float(response["executedQty"])
@@ -253,7 +285,14 @@ class Flipper:
         heappop(self.buy_heap)
 
         print(
-            f"Sold {sold:.8f} {self.base_symbol} at {actual_price:.8f} {self.quote_symbol} [{for_quote:.8f} {self.quote_symbol}]"
+            "Sold {sold:.{base_prec}f} {base_symbol} at {price:.{quote_prec}f} {quote_symbol} [{for_quote:.{quote_prec}f} {quote_symbol}]".format(
+                sold=sold,
+                price=actual_price,
+                base_prec=self.base_meta.precision,
+                base_symbol=self.base_meta.symbol,
+                quote_prec=self.quote_meta.precision,
+                quote_symbol=self.quote_meta.symbol,
+            )
         )
 
     def preload(self, limit=1000):
@@ -271,7 +310,15 @@ class Flipper:
             buyin_value = initial_buyin * self.last_price * 0.999
             print(".: Buy-in strategy (entry vs exit)")
             print(
-                f" {self.buyin_price:.8f} {self.quote_symbol} -:- {self.last_price:.8f} {self.quote_symbol} \t\t==> {buyin_value:.8f} {self.quote_symbol} <=="
+                "   {buy_at:.{quote_prec}f} {quote_symbol} -:- {sell_at:.{quote_prec}f} {quote_symbol} \t\t==> {buyin_value:.{quote_prec}f} {quote_symbol} <==".format(
+                    buy_at=self.buyin_price,
+                    buyin_value=buyin_value,
+                    sell_at=self.last_price,
+                    base_prec=self.base_meta.precision,
+                    base_symbol=self.base_meta.symbol,
+                    quote_prec=self.quote_meta.precision,
+                    quote_symbol=self.quote_meta.symbol,
+                )
             )
         else:
             print("   No transactions yet.")
@@ -279,8 +326,18 @@ class Flipper:
         print(
             f".: Auto-flip strategy (after {len(self.order_history)} transactions) --"
         )
+
+        valued = self.base * self.last_price * 0.999 + self.quote
         print(
-            f"   {self.base:.8f} {self.base_symbol} + {self.quote:.8f} {self.quote_symbol} \t\t\t==> {self.base * self.last_price * 0.999 + self.quote:.8f} {self.quote_symbol} <=="
+            "   {base:.{base_prec}f} {base_symbol} + {quote:.{quote_prec}f} {quote_symbol} \t\t\t==> {value:.{quote_prec}f} {quote_symbol} <==".format(
+                base=self.base,
+                quote=self.quote,
+                value=valued,
+                base_prec=self.base_meta.precision,
+                base_symbol=self.base_meta.symbol,
+                quote_prec=self.quote_meta.precision,
+                quote_symbol=self.quote_meta.symbol,
+            )
         )
 
     def tick(self):
@@ -301,7 +358,7 @@ class Flipper:
     def backtest(self, amount):
         price_cache = f"{self.symbol}_price.dat"
         if os.path.isfile(price_cache):
-            print(f"Reading {price_cache}...")
+            print(f"/: Reading {price_cache}...")
             with open(price_cache, "rb") as data_file:
                 data = pickle.load(data_file)
 

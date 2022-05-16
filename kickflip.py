@@ -14,7 +14,7 @@ def main(client: Spot, pair, budget):
     try:
         flippy = Flipper(client, pair, budget)
     except ClientError as error:
-        print("ERROR: Cannot create trader instance:", error.error_message)
+        print("x: Cannot create trader instance:", error.error_message)
         return -1
 
     # flippy.preload()
