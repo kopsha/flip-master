@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from argparse import ArgumentParser
 from datetime import datetime, timedelta
+from decimal import Decimal, getcontext
 from trade_clients import make_binance_test_client, make_binance_client
 from flipper import Flipper
 from binance.spot import Spot
@@ -59,8 +60,12 @@ def backtest(client: Spot, symbol, budget):
         print("\t", balance["free"], balance["asset"])
 
     symbol_data = exchage_data["symbols"][0]
+    getcontext().prec = max(
+        symbol_data["quoteAssetPrecision"], symbol_data["baseAssetPrecision"]
+    )
+
     assert account_data["makerCommission"] == account_data["takerCommission"]
-    commission = (account_data["makerCommission"] or 10) / 10000
+    commission = Decimal(account_data["makerCommission"] or 10) / 10000
     pair = (symbol_data["baseAsset"], symbol_data["quoteAsset"])
 
     os.makedirs(f"./{symbol}", exist_ok=True)
@@ -71,17 +76,22 @@ def backtest(client: Spot, symbol, budget):
         print("x: Cannot read klines:", error.error_message)
         return -1
 
-
     window_perf = dict()
     for window in [5, 8, 13, 21, 34, 55]:
 
         factor_results = dict()
         for iff in range(15, 28):
-            factor = iff / 10
-            flippy = Flipper(pair, budget,commission, split=10, window=window, factor=factor)
-            factor_results[factor] = flippy.backtest(data, f"backtest_{window}x{factor}")
+            factor = Decimal(iff) / 10
+            flippy = Flipper(
+                pair, budget, commission, split=10, window=window, factor=factor
+            )
+            factor_results[factor] = flippy.backtest(
+                data, f"backtest_{window}x{factor}"
+            )
 
-        fact_performance = list(sorted(factor_results.items(), key=lambda x: x[1], reverse=True))
+        fact_performance = list(
+            sorted(factor_results.items(), key=lambda x: x[1], reverse=True)
+        )
         window_perf[window] = fact_performance
 
     pprint(window_perf)

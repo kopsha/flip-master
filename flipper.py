@@ -7,6 +7,7 @@ from binance.error import ClientError
 from datetime import datetime
 from statistics import stdev, mean
 from collections import deque
+from decimal import Decimal
 from heapq import heappush, heappop
 from metaflip import FlipSignals, KLinePoint, PricePoint, AssetMeta
 
@@ -16,14 +17,14 @@ class Flipper:
     def __init__(self, pair, budget, commission, split=10, window=28, factor=2):
         self.base_asset, self.quote_asset = pair
         self.symbol = "".join(pair)
-        self.budget = budget
-        self.split = split
-        self.commission = commission
+        self.budget = Decimal(budget)
+        self.split = Decimal(split)
+        self.commission = Decimal(commission)
 
-        self.quote = budget
-        self.base = 0
+        self.quote = Decimal(budget)
+        self.base = Decimal(0)
         self.window = window
-        self.factor = factor
+        self.factor = Decimal(factor)
 
         self.prices = list()
         self.timeline = list()
@@ -144,7 +145,7 @@ class Flipper:
         start_at = len(self.prices)
         klines = [KLinePoint(*x) for x in data]
 
-        self.prices.extend([float(x.close) for x in klines])
+        self.prices.extend([Decimal(x.close) for x in klines])
         self.timeline.extend(
             [datetime.fromtimestamp(x.close_time // 1000) for x in klines]
         )
@@ -218,7 +219,9 @@ class Flipper:
 
         self.quote -= amount
         self.base += bought
-        self.order_history.append(dict(signal=FlipSignals.BUY, price=self.last_price, time=self.timeline[-1]))
+        self.order_history.append(
+            dict(signal=FlipSignals.BUY, price=self.last_price, time=self.timeline[-1])
+        )
         heappush(self.buy_heap, self.last_price)
 
         print(
@@ -243,7 +246,9 @@ class Flipper:
 
         self.base -= sold
         self.quote += amount * (1 - self.commission)
-        self.order_history.append(dict(signal=FlipSignals.SELL, price=self.last_price, time=self.timeline[-1]))
+        self.order_history.append(
+            dict(signal=FlipSignals.SELL, price=self.last_price, time=self.timeline[-1])
+        )
         heappop(self.buy_heap)
 
         print(
@@ -252,7 +257,6 @@ class Flipper:
         # profit = (self.last_price - cheapest) * sold * (1 - self.commission)
         # print(f"   -- est. profit: {profit:.2f} {self.quote_asset}" )
         # self.profit_history.append(profit)
-
 
     def buy(self, amount, client):
 
@@ -273,8 +277,8 @@ class Flipper:
             print("x: BUY order failed:", error.error_message)
             return
 
-        bought = float(response["executedQty"])
-        for_quote = float(response["cummulativeQuoteQty"])
+        bought = Decimal(response["executedQty"])
+        for_quote = Decimal(response["cummulativeQuoteQty"])
         actual_price = for_quote / bought
         self.quote -= for_quote
         self.base += bought
@@ -313,8 +317,8 @@ class Flipper:
             print("x: SELL order failed:", error.error_message)
             return
 
-        sold = float(response["executedQty"])
-        for_quote = float(response["cummulativeQuoteQty"])
+        sold = Decimal(response["executedQty"])
+        for_quote = Decimal(response["cummulativeQuoteQty"])
         actual_price = for_quote / sold
         self.base -= sold
         self.quote += for_quote
@@ -324,9 +328,13 @@ class Flipper:
         print(
             f"   Sold {sold:.8f} {self.base_asset} at {actual_price:.8f} {self.quote_asset} [{for_quote:.8f} {self.quote_asset}]"
         )
-        print(f"   -> last price {self.last_price:.8f} vs {actual_price:.8f} {self.quote_asset}")
+        print(
+            f"   -> last price {self.last_price:.8f} vs {actual_price:.8f} {self.quote_asset}"
+        )
         if actual_price < cheapest:
-            print(f"   Oops, I've made a sell without profit, delta: {cheapest - actual_price:.8f}")
+            print(
+                f"   Oops, I've made a sell without profit, delta: {cheapest - actual_price:.8f}"
+            )
 
     def feed(self, data):
         self.consume(deque(data))

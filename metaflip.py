@@ -3,6 +3,7 @@ from collections import namedtuple
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
+from decimal import Decimal
 
 
 # Binance API response kline format
@@ -33,15 +34,15 @@ class PricePoint:
     """Main flippie data structure"""
 
     open_time: datetime
-    open: float
-    close: float
+    open: Decimal
+    close: Decimal
     close_time: datetime
 
     def __init__(self, kline_data):
         kpoint = KLinePoint(*kline_data)
         self.open_time = datetime.fromtimestamp(kpoint.open_time // 1000)
-        self.open = float(kpoint.open)
-        self.close = float(kpoint.low)
+        self.open = Decimal(kpoint.open)
+        self.close = Decimal(kpoint.low)
         self.close_time = datetime.fromtimestamp(kpoint.close_time // 1000)
 
 
