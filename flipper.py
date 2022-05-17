@@ -42,22 +42,8 @@ class Flipper:
         self.follow_up = None
 
         print(
-            f".: {pair} trader created, budget {budget:.8f} {self.quote_asset}, commission {commission * 100} %"
+            f".: {pair} trader created, budget {budget:.8f} {self.quote_asset}, commission {commission * 100} %, {window} x {factor}"
         )
-
-    @staticmethod
-    def from_cache(symbol):
-        filename = f"{symbol}_cache.dat"
-        flippy = None
-        if os.path.isfile(filename):
-            with open(filename, "wb") as data_file:
-                flippy = pickle.load(data_file, protocol=pickle.HIGHEST_PROTOCOL)
-        return flippy
-
-    def save(self):
-        filename = f"{self.symbol}_cache.dat"
-        with open(filename, "wb") as data_file:
-            pickle.dump(self, data_file, protocol=pickle.HIGHEST_PROTOCOL)
 
     @property
     def last_price(self):
@@ -87,7 +73,7 @@ class Flipper:
 
     def draw_trading_chart(self, description, limit=1000):
         since = max(len(self.prices) - limit, 0)
-        fig, axes = plt.subplots(1, 1, sharex=True, figsize=(15.748, 3.93701), dpi=160)
+        fig, axes = plt.subplots(1, 1, sharex=True, figsize=(15.7, 5.5), dpi=160)
 
         axes.plot(
             self.timeline[since:],
@@ -114,7 +100,7 @@ class Flipper:
         for label in axes.get_xticklabels(which="major"):
             label.set(rotation=45, horizontalalignment="right")
 
-        balance = self.split // 2
+        balance = self.split // 2 - 1
         for order in self.order_history:
             signal, price, timestamp = order.values()
             if signal == FlipSignals.BUY:
@@ -124,7 +110,7 @@ class Flipper:
             axes.annotate(
                 f"{balance}",
                 xy=(timestamp, price),
-                fontsize="large",
+                fontsize="small",
                 xytext=((0.0, +75.0) if signal == FlipSignals.SELL else (0.0, -75.0)),
                 textcoords="offset pixels",
                 color="green" if signal == FlipSignals.SELL else "red",
@@ -134,7 +120,7 @@ class Flipper:
             )
 
         # timed = self.timeline[-1].strftime("%Y-%m-%d_%H:%M:%S")
-        plt.savefig(f"{self.symbol}_chart_factor_{description}.png")
+        plt.savefig(f"./{self.symbol}/{description}.png")
         plt.close()
 
     def _consume_first(self, kline_data):
@@ -222,13 +208,13 @@ class Flipper:
             for _ in range(4):
                 heappush(self.buy_heap, self.last_price)
 
-        if self.quote <= amount:
+        bought = (1 - self.commission) * amount / self.last_price
+
+        if self.quote < amount:
             # print(
-            #     f"/x Cannot buy {amount:.8f} {self.base_asset}, available {self.quote:.8f} {self.quote_asset} is not enough."
+            #     f"/x Cannot buy {bought:.8f} {self.base_asset}, available {self.quote:.8f} {self.quote_asset} is not enough."
             # )
             return
-
-        bought = (1 - self.commission) * amount / self.last_price
 
         self.quote -= amount
         self.base += bought
@@ -239,6 +225,33 @@ class Flipper:
             f"/: Bought {bought:.8f} {self.base_asset} at {self.last_price:.8f} {self.quote_asset} [{amount:.8f} {self.quote_asset}]"
         )
         return
+
+    def fake_sell(self, amount):
+
+        sold = amount / self.last_price
+        # print("selling", amount, self.quote_asset, "available base", self.base, self.base_asset, "sold", sold)
+        if not self.buy_heap:
+            # print(
+            #     f"/x Cannot sell outside buying heap"
+            # )
+            return
+
+        cheapest = self.buy_heap[0] if self.buy_heap else 0
+        if self.last_price <= (cheapest * (1 + self.commission)):
+            # print(f"/x Cannot sell without profit, {self.last_price} < {cheapest}")
+            return
+
+        self.base -= sold
+        self.quote += amount * (1 - self.commission)
+        self.order_history.append(dict(signal=FlipSignals.SELL, price=self.last_price, time=self.timeline[-1]))
+        heappop(self.buy_heap)
+
+        print(
+            f"/: Sold {sold:.8f} {self.base_asset} at {self.last_price:.8f} {self.quote_asset} [{amount:.8f} {self.quote_asset}]"
+        )
+        # profit = (self.last_price - cheapest) * sold * (1 - self.commission)
+        # print(f"   -- est. profit: {profit:.2f} {self.quote_asset}" )
+        # self.profit_history.append(profit)
 
 
     def buy(self, amount, client):
@@ -275,32 +288,6 @@ class Flipper:
         print(
             f".: Bought {bought:.8f} {self.base_asset} at {actual_price:.8f} {self.quote_asset} [{for_quote:.8f} {self.quote_asset}]"
         )
-
-    def fake_sell(self, amount):
-        sold = amount / self.last_price
-        if sold > self.base:
-            # print(
-            #     f"/x Cannot sell {sold:.8f} {self.base_asset}, only {self.base:.8f} is available"
-            # )
-            return
-
-        cheapest = self.buy_heap[0]
-        if self.last_price <= (cheapest * (1 + self.commission)):
-            # print(f"/x Cannot sell without profit, {self.last_price} < {cheapest}")
-            return
-
-        self.base -= sold
-        self.quote += amount * (1 - self.commission)
-        self.order_history.append(dict(signal=FlipSignals.SELL, price=self.last_price, time=self.timeline[-1]))
-        heappop(self.buy_heap)
-
-        print(
-            f"/: Sold {sold:.8f} {self.base_asset} at {self.last_price:.8f} {self.quote_asset} [{amount:.8f} {self.quote_asset}]"
-        )
-        # profit = (self.last_price - cheapest) * sold * (1 - self.commission)
-        # print(f"   -- est. profit: {profit:.2f} {self.quote_asset}" )
-        # self.profit_history.append(profit)
-
 
     def sell(self, amount, client):
         est_sold = 0.99 * amount / self.last_price
@@ -363,6 +350,7 @@ class Flipper:
 
             if signal == FlipSignals.BUY:
                 self.fake_buy(amount)
+
             elif signal == FlipSignals.SELL:
                 self.fake_sell(amount)
 

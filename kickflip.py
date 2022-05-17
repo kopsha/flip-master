@@ -1,17 +1,50 @@
 #!/usr/bin/env python3
 from argparse import ArgumentParser
-from datetime import datetime
+from datetime import datetime, timedelta
 from trade_clients import make_binance_test_client, make_binance_client
 from flipper import Flipper
 from binance.spot import Spot
 from binance.error import ClientError
 import schedule
 import time
+import os
+import pickle
 
 from pprint import pprint
 
 
-def main(client: Spot, symbol, budget):
+def read_past_24h(client, symbol):
+    cache_file = f"./{symbol}/klines.dat"
+    data = list()
+    now = datetime.now()
+    recent = int((now - timedelta(minutes=1)).timestamp()) * 1000
+
+    if os.path.isfile(cache_file):
+        with open(cache_file, "rb") as data_file:
+            data += pickle.load(data_file)
+        print(f"Read {len(data)} records from {cache_file}")
+
+    if data:
+        since = data[-1][6]
+    else:
+        past = now - timedelta(days=1)
+        since = int(past.timestamp() * 1000)
+
+    while since < recent:
+        chunk = client.klines(symbol, "1m", startTime=since, limit=1000)
+        since = chunk[-1][6]  # ATTENTION: close_time
+        data += chunk
+
+        with open(cache_file, "wb") as data_file:
+            pickle.dump(data, data_file, protocol=pickle.HIGHEST_PROTOCOL)
+            print(f".: Cached {len(data)} to {cache_file}")
+
+        time.sleep(1)
+
+    return data
+
+
+def backtest(client: Spot, symbol, budget):
 
     try:
         account_data = client.account()
@@ -30,39 +63,53 @@ def main(client: Spot, symbol, budget):
     commission = (account_data["makerCommission"] or 10) / 10000
     pair = (symbol_data["baseAsset"], symbol_data["quoteAsset"])
 
-    data1 = client.klines(symbol, "1m", startTime=1652734800000)
-    data2 = client.klines(symbol, "1m", startTime=data1[-1][6])
-    # data = client.klines(symbol, "1m")
-    data = data1 + data2
+    os.makedirs(f"./{symbol}", exist_ok=True)
+
+    try:
+        data = read_past_24h(client, symbol)
+    except ClientError as error:
+        print("x: Cannot read klines:", error.error_message)
+        return -1
+
 
     window_perf = dict()
     for window in [5, 8, 13, 21, 34, 55]:
 
         factor_results = dict()
-        for iff in range(16, 28):
+        for iff in range(15, 28):
             factor = iff / 10
             flippy = Flipper(pair, budget,commission, split=10, window=window, factor=factor)
-            factor_results[factor] = flippy.backtest(data, f"{window}x{factor}")
+            factor_results[factor] = flippy.backtest(data, f"backtest_{window}x{factor}")
 
         fact_performance = list(sorted(factor_results.items(), key=lambda x: x[1], reverse=True))
         window_perf[window] = fact_performance
 
     pprint(window_perf)
 
+    together = list()
+    for window in window_perf:
+        for factor, performance in window_perf[window]:
+            together.append((f"{window} x {factor}", performance))
+
+    pprint(sorted(together, key=lambda x: x[1], reverse=True))
+
+
+def run(client, symbol, budget):
+
     # schedule.every().minute.at(":33").do(lambda: flippy.tick())
     # while True:
     #     schedule.run_pending()
     #     time.sleep(0.618033988749894)
+    print("not implemented")
 
 
 if __name__ == "__main__":
 
     args = ArgumentParser(description="Trading on the flip side")
-    args.add_argument("--pair", required=True, help="Indicate which trading pair")
-    args.add_argument(
-        "--budget", type=float, required=True, help="Allocatted budget for quote asset"
-    )
+    args.add_argument("--pair", required=True)
+    args.add_argument("--budget", type=float, required=True)
     args.add_argument("--go-live", action="store_const", const=True, default=False)
+    args.add_argument("--backtest", action="store_const", const=True, default=False)
 
     actual = args.parse_args()
 
@@ -73,4 +120,9 @@ if __name__ == "__main__":
         print(".: Using test connector.")
         client = make_binance_test_client()
 
-    exit(main(client, actual.pair, actual.budget))
+    if actual.backtest:
+        ret_code = backtest(client, actual.pair, actual.budget)
+    else:
+        ret_code = run(client, actual.pair)
+
+    exit(ret_code)
