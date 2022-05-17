@@ -12,20 +12,19 @@ from metaflip import FlipSignals, KLinePoint, PricePoint, AssetMeta
 
 
 class Flipper:
-    def __init__(self, client: Spot, symbol, budget):
-        self.client = client
-        self.symbol = symbol
+    # TODO: remove client dependency
+    def __init__(self, pair, budget, commission, split=10, window=28, factor=2):
+        self.base_asset, self.quote_asset = pair
+        self.symbol = "".join(pair)
         self.budget = budget
+        self.split = split
+        self.commission = commission
+
         self.quote = budget
         self.base = 0
-        self.buy_heap = list()
-        self.buyin_price = None
-        self.follow_up = None
+        self.window = window
+        self.factor = factor
 
-        self.window = 21
-        self.factor = 1.9
-
-        self.order_history = list()
         self.prices = list()
         self.timeline = list()
         self.velocity = list()
@@ -34,80 +33,61 @@ class Flipper:
         self.bb_low = list()
         self.bb_high = list()
 
-        self.last_kline = None
+        self.buy_heap = list()
+        self.order_history = list()
+        self.profit_history = list()
 
-        account_data = self.client.account()
-        self.commission = account_data["makerCommission"]
-        assert account_data["takerCommission"] == self.commission
-
-        info_data = client.exchange_info(symbol)
-        assert (
-            len(info_data["symbols"]) == 1
-        ), f"The {symbol} pair points to {len(info_data['symbols'])}, instead of one."
-        info = info_data["symbols"].pop()
-
-        self.base_meta = AssetMeta(
-            info["baseAsset"],
-            info["baseAssetPrecision"],
-        )
-        self.quote_meta = AssetMeta(
-            info["quoteAsset"],
-            info["quoteAssetPrecision"],
-        )
+        self.buyin = None
+        self.buyin_price = None
+        self.follow_up = None
 
         print(
-            ".: New {left} / {right} trader, budget {budget:.{prec}f} {right}".format(
-                left=self.base_meta.symbol,
-                right=self.quote_meta.symbol,
-                budget=budget,
-                prec=self.quote_meta.precision,
-            )
+            f".: {pair} trader created, budget {budget:.8f} {self.quote_asset}, commission {commission * 100} %"
         )
 
-    def _consume_first(self, kline_data):
-        self.last_kline = KLinePoint(*kline_data)
-        first = PricePoint(kline_data)
-        self.prices.append(first.close)
-        self.timeline.append(first.close_time)
-        self.velocity.append(first.close - first.open)
-        self.bb_mean.append(mean([first.open, first.close]))
-        self.bb_stdev.append(stdev([first.open, first.close]))
-        self.bb_low.append(min([first.open, first.close]))
-        self.bb_high.append(max([first.open, first.close]))
+    @staticmethod
+    def from_cache(symbol):
+        filename = f"{symbol}_cache.dat"
+        flippy = None
+        if os.path.isfile(filename):
+            with open(filename, "wb") as data_file:
+                flippy = pickle.load(data_file, protocol=pickle.HIGHEST_PROTOCOL)
+        return flippy
 
-    def feed_klines(self, data):
-        if not data:
-            print(".: KLines feed seems empty, skipped.")
-            return
+    def save(self):
+        filename = f"{self.symbol}_cache.dat"
+        with open(filename, "wb") as data_file:
+            pickle.dump(self, data_file, protocol=pickle.HIGHEST_PROTOCOL)
 
-        if len(self.prices) == 0:
-            self._consume_first(data.popleft())
+    @property
+    def last_price(self):
+        return self.prices[-1] if self.prices else None
 
-        start_at = len(self.prices)
+    def show_me_the_money(self):
+        print("")
+        # if self.order_history:
+        #     buyin_value = self.buyin * self.last_price * (1 - self.commission)
+        #     print(".: Buy-in value")
+        #     print(
+        #         f"   {self.buyin_price:.8f} {self.quote_asset} -:- {self.last_price:.8f} {self.quote_asset} \t\t==> {buyin_value:.8f} {self.quote_asset} <=="
+        #     )
+        # else:
+        #     print("   No transactions yet.")
 
-        klines = [KLinePoint(*x) for x in data]
-        if klines:
-            self.last_kline = klines[-1]
-
-        self.prices.extend([float(x.close) for x in klines])
-        self.timeline.extend(
-            [datetime.fromtimestamp(x.close_time // 1000) for x in klines]
+        print(
+            f".: Auto-flip strategy (after {len(self.order_history)} transactions) --"
         )
 
-        for right in range(start_at, len(self.prices)):
-            left = max(right - self.window, 0)
-            mm = mean(self.prices[left : right + 1])
-            std = stdev(self.prices[left : right + 1])
+        valued = self.base * self.last_price * (1 - self.commission) + self.quote
+        performance = (valued - self.budget) * 100 / self.budget
+        print(
+            f"   {self.base:.8f} {self.base_asset} + {self.quote:.8f} {self.quote_asset} \t\t\t==> {valued:.8f} {self.quote_asset} : {performance:.2f} % <=="
+        )
+        return performance
 
-            self.bb_stdev.append(self.factor * std)
-            self.bb_mean.append(mm)
-            self.bb_high.append(mm + self.factor * std)
-            self.bb_low.append(mm - self.factor * std)
-            self.velocity.append(self.prices[right] - self.prices[right - 1])
-
-    def draw_trading_chart(self, limit=1000):
+    def draw_trading_chart(self, description, limit=1000):
         since = max(len(self.prices) - limit, 0)
-        fig, axes = plt.subplots(1, 1, sharex=True)
+        fig, axes = plt.subplots(1, 1, sharex=True, figsize=(15.748, 3.93701), dpi=160)
 
         axes.plot(
             self.timeline[since:],
@@ -129,19 +109,23 @@ class Flipper:
         axes.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
         axes.xaxis.set_minor_locator(mdates.HourLocator())
         axes.grid(visible=True, which="both")
-        axes.set_title(f"{self.symbol}")
+        axes.set_title(f"{self.symbol}, using {description}")
 
         for label in axes.get_xticklabels(which="major"):
             label.set(rotation=45, horizontalalignment="right")
 
+        balance = self.split // 2
         for order in self.order_history:
             signal, price, timestamp = order.values()
-            mark_time = datetime.fromtimestamp(timestamp // 1000)
+            if signal == FlipSignals.BUY:
+                balance += 1
+            else:
+                balance -= 1
             axes.annotate(
-                signal.name,
-                xy=(mark_time, price),
+                f"{balance}",
+                xy=(timestamp, price),
                 fontsize="large",
-                xytext=((0.0, +34.0) if signal == FlipSignals.SELL else (0.0, -34.0)),
+                xytext=((0.0, +75.0) if signal == FlipSignals.SELL else (0.0, -75.0)),
                 textcoords="offset pixels",
                 color="green" if signal == FlipSignals.SELL else "red",
                 horizontalalignment="center",
@@ -150,17 +134,49 @@ class Flipper:
             )
 
         # timed = self.timeline[-1].strftime("%Y-%m-%d_%H:%M:%S")
-        # plt.savefig(f"{self.symbol}_chart_{timed}.png", dpi=600)
-        plt.show()
+        plt.savefig(f"{self.symbol}_chart_factor_{description}.png")
         plt.close()
+
+    def _consume_first(self, kline_data):
+        first = PricePoint(kline_data)
+        self.prices.append(first.close)
+        self.timeline.append(first.close_time)
+        self.velocity.append(first.close - first.open)
+        self.bb_mean.append(mean([first.open, first.close]))
+        self.bb_stdev.append(stdev([first.open, first.close]))
+        self.bb_low.append(min([first.open, first.close]))
+        self.bb_high.append(max([first.open, first.close]))
+
+    def consume(self, data):
+        if not data:
+            print(".: Provided feed seems empty, skipped.")
+            return
+
+        if len(self.prices) == 0:
+            self._consume_first(data.popleft())
+
+        start_at = len(self.prices)
+        klines = [KLinePoint(*x) for x in data]
+
+        self.prices.extend([float(x.close) for x in klines])
+        self.timeline.extend(
+            [datetime.fromtimestamp(x.close_time // 1000) for x in klines]
+        )
+
+        for right in range(start_at, len(self.prices)):
+            left = max(right - self.window, 0)
+            mm = mean(self.prices[left : right + 1])
+            std = stdev(self.prices[left : right + 1])
+
+            self.bb_stdev.append(self.factor * std)
+            self.bb_mean.append(mm)
+            self.bb_high.append(mm + self.factor * std)
+            self.bb_low.append(mm - self.factor * std)
+            self.velocity.append(self.prices[right] - self.prices[right - 1])
 
     @property
     def last_price(self):
         return self.prices[-1] if self.prices else 0
-
-    @property
-    def last_timestamp(self):
-        return self.last_kline.close_time
 
     def compute_signal(self):
         """trigger signal base on last point only"""
@@ -198,26 +214,43 @@ class Flipper:
 
         return signal
 
-    def buy(self, amount):
+    def fake_buy(self, amount):
+        if not self.buyin:
+            self.buyin = (1 - self.commission) * self.budget / self.last_price
+            self.buyin_price = self.last_price
+            amount = self.budget / 2
+            for _ in range(4):
+                heappush(self.buy_heap, self.last_price)
+
+        if self.quote <= amount:
+            # print(
+            #     f"/x Cannot buy {amount:.8f} {self.base_asset}, available {self.quote:.8f} {self.quote_asset} is not enough."
+            # )
+            return
+
+        bought = (1 - self.commission) * amount / self.last_price
+
+        self.quote -= amount
+        self.base += bought
+        self.order_history.append(dict(signal=FlipSignals.BUY, price=self.last_price, time=self.timeline[-1]))
+        heappush(self.buy_heap, self.last_price)
+
+        print(
+            f"/: Bought {bought:.8f} {self.base_asset} at {self.last_price:.8f} {self.quote_asset} [{amount:.8f} {self.quote_asset}]"
+        )
+        return
+
+
+    def buy(self, amount, client):
 
         if self.quote < (amount * 0.99):
             print(
-                "x: Cannot buy {amount:.{base_prec}f} {base_symbol}, available {quote:.{quote_prec}f} {quote_symbol} is not enough.".format(
-                    amount=amount,
-                    quote=self.quote,
-                    base_prec=self.base_meta.precision,
-                    base_symbol=self.base_meta.symbol,
-                    quote_prec=self.quote_meta.precision,
-                    quote_symbol=self.quote_meta.symbol,
-                )
+                f"x: Cannot buy {amount:.8f} {self.base_asset}, available {self.quote:.8f} {self.quote_asset} is not enough."
             )
             return
 
-        if not self.buyin_price:
-            self.buyin_price = self.last_price
-
         try:
-            response = self.client.new_order(
+            response = client.new_order(
                 symbol=self.symbol,
                 side="BUY",
                 type="MARKET",
@@ -235,38 +268,55 @@ class Flipper:
         self.order_history.append(response)
         heappush(self.buy_heap, actual_price)
 
+        if not self.buyin:
+            self.buyin = self.budget
+            self.buyin_price = actual_price
+
         print(
-            ".: Bought {bought:.{base_prec}f} {base_symbol} at {price:.{quote_prec}f} {quote_symbol} [{for_quote:.{quote_prec}f} {quote_symbol}]".format(
-                bought=bought,
-                price=actual_price,
-                for_quote=for_quote,
-                base_prec=self.base_meta.precision,
-                base_symbol=self.base_meta.symbol,
-                quote_prec=self.quote_meta.precision,
-                quote_symbol=self.quote_meta.symbol,
-            )
+            f".: Bought {bought:.8f} {self.base_asset} at {actual_price:.8f} {self.quote_asset} [{for_quote:.8f} {self.quote_asset}]"
         )
 
-    def sell(self, amount):
+    def fake_sell(self, amount):
+        sold = amount / self.last_price
+        if sold > self.base:
+            # print(
+            #     f"/x Cannot sell {sold:.8f} {self.base_asset}, only {self.base:.8f} is available"
+            # )
+            return
+
+        cheapest = self.buy_heap[0]
+        if self.last_price <= (cheapest * (1 + self.commission)):
+            # print(f"/x Cannot sell without profit, {self.last_price} < {cheapest}")
+            return
+
+        self.base -= sold
+        self.quote += amount * (1 - self.commission)
+        self.order_history.append(dict(signal=FlipSignals.SELL, price=self.last_price, time=self.timeline[-1]))
+        heappop(self.buy_heap)
+
+        print(
+            f"/: Sold {sold:.8f} {self.base_asset} at {self.last_price:.8f} {self.quote_asset} [{amount:.8f} {self.quote_asset}]"
+        )
+        # profit = (self.last_price - cheapest) * sold * (1 - self.commission)
+        # print(f"   -- est. profit: {profit:.2f} {self.quote_asset}" )
+        # self.profit_history.append(profit)
+
+
+    def sell(self, amount, client):
         est_sold = 0.99 * amount / self.last_price
         if est_sold > self.base:
             print(
-                "x: Cannot sell {sold:.{base_prec}f} {base_symbol}, only {base:.{base_prec}f} is available".format(
-                    sold=est_sold,
-                    base=self.base,
-                    base_prec=self.base_meta.precision,
-                    base_symbol=self.base_meta.symbol,
-                )
+                f"x: Cannot sell {est_sold:.8f} {self.base_asset}, only {self.base:.8f} is available"
             )
             return
 
         cheapest = self.buy_heap[0]
-        if self.last_price <= (cheapest * 1.001):
+        if self.last_price <= (cheapest * (1 + self.commission)):
             print(f"x: Cannot sell without profit, {self.last_price} < {cheapest}")
             return
 
         try:
-            response = self.client.new_order(
+            response = client.new_order(
                 symbol=self.symbol,
                 side="SELL",
                 type="MARKET",
@@ -285,67 +335,17 @@ class Flipper:
         heappop(self.buy_heap)
 
         print(
-            "Sold {sold:.{base_prec}f} {base_symbol} at {price:.{quote_prec}f} {quote_symbol} [{for_quote:.{quote_prec}f} {quote_symbol}]".format(
-                sold=sold,
-                price=actual_price,
-                base_prec=self.base_meta.precision,
-                base_symbol=self.base_meta.symbol,
-                quote_prec=self.quote_meta.precision,
-                quote_symbol=self.quote_meta.symbol,
-            )
+            f"   Sold {sold:.8f} {self.base_asset} at {actual_price:.8f} {self.quote_asset} [{for_quote:.8f} {self.quote_asset}]"
         )
+        print(f"   -> last price {self.last_price:.8f} vs {actual_price:.8f} {self.quote_asset}")
+        if actual_price < cheapest:
+            print(f"   Oops, I've made a sell without profit, delta: {cheapest - actual_price:.8f}")
 
-    def preload(self, limit=1000):
-        data = self.client.klines(self.symbol, "1m", limit=limit)
-        price_cache = f"{self.symbol}_price.dat"
-        with open(price_cache, "wb") as data_file:
-            pickle.dump(data, data_file)
-
-        self.feed_klines(deque(data))
-
-    def show_me_the_money(self):
-        print("")
-        if self.order_history:
-            initial_buyin = (self.budget / self.buyin_price) * 0.999
-            buyin_value = initial_buyin * self.last_price * 0.999
-            print(".: Buy-in strategy (entry vs exit)")
-            print(
-                "   {buy_at:.{quote_prec}f} {quote_symbol} -:- {sell_at:.{quote_prec}f} {quote_symbol} \t\t==> {buyin_value:.{quote_prec}f} {quote_symbol} <==".format(
-                    buy_at=self.buyin_price,
-                    buyin_value=buyin_value,
-                    sell_at=self.last_price,
-                    base_prec=self.base_meta.precision,
-                    base_symbol=self.base_meta.symbol,
-                    quote_prec=self.quote_meta.precision,
-                    quote_symbol=self.quote_meta.symbol,
-                )
-            )
-        else:
-            print("   No transactions yet.")
-
-        print(
-            f".: Auto-flip strategy (after {len(self.order_history)} transactions) --"
-        )
-
-        valued = self.base * self.last_price * 0.999 + self.quote
-        print(
-            "   {base:.{base_prec}f} {base_symbol} + {quote:.{quote_prec}f} {quote_symbol} \t\t\t==> {value:.{quote_prec}f} {quote_symbol} <==".format(
-                base=self.base,
-                quote=self.quote,
-                value=valued,
-                base_prec=self.base_meta.precision,
-                base_symbol=self.base_meta.symbol,
-                quote_prec=self.quote_meta.precision,
-                quote_symbol=self.quote_meta.symbol,
-            )
-        )
-
-    def tick(self):
-        data = self.client.klines(self.symbol, "1m", startTime=self.last_timestamp)
-        self.feed_klines(deque(data))
+    def feed(self, data):
+        self.consume(deque(data))
         signal = self.compute_signal()
 
-        amount = self.budget / 10
+        amount = self.budget / self.split
         if signal == FlipSignals.BUY:
             self.buy(amount)
             self.show_me_the_money()
@@ -355,23 +355,17 @@ class Flipper:
 
         print(".", end="", flush=True)
 
-    def backtest(self, amount):
-        price_cache = f"{self.symbol}_price.dat"
-        if os.path.isfile(price_cache):
-            print(f"/: Reading {price_cache}...")
-            with open(price_cache, "rb") as data_file:
-                data = pickle.load(data_file)
-
+    def backtest(self, data, description):
+        amount = self.budget / self.split
         for kline_data in data:
-            self.feed_klines(deque([kline_data]))
+            self.consume(deque([kline_data]))
             signal = self.compute_signal()
 
             if signal == FlipSignals.BUY:
-                self.buy(amount)
+                self.fake_buy(amount)
             elif signal == FlipSignals.SELL:
-                self.sell(amount)
+                self.fake_sell(amount)
 
-        print(self.buy_heap)
-
-        self.show_me_the_money()
-        self.draw_trading_chart()
+        self.draw_trading_chart(description)
+        performance = self.show_me_the_money()
+        return performance
