@@ -43,8 +43,15 @@ class Flipper:
         self.follow_up = None
 
         print(
-            f".: {pair} trader created, budget {budget:.8f} {self.quote_asset}, commission {commission * 100} %, {window} x {factor}"
+            f".: {pair} trader created, budget {budget:.8f} {self.quote_asset}, commission {commission * 100:.2f} %, {window} x {factor}"
         )
+
+    def save_order_book(self):
+        orders_cache = f"./{self.symbol}/order_history.dat"
+        with open(orders_cache, "wb") as data_file:
+            pickle.dump(self.order_history, data_file)
+        print(f"Saved orders to {orders_cache}")
+
 
     @property
     def last_price(self):
@@ -52,14 +59,6 @@ class Flipper:
 
     def show_me_the_money(self):
         print("")
-        # if self.order_history:
-        #     buyin_value = self.buyin * self.last_price * (1 - self.commission)
-        #     print(".: Buy-in value")
-        #     print(
-        #         f"   {self.buyin_price:.8f} {self.quote_asset} -:- {self.last_price:.8f} {self.quote_asset} \t\t==> {buyin_value:.8f} {self.quote_asset} <=="
-        #     )
-        # else:
-        #     print("   No transactions yet.")
 
         print(
             f".: Auto-flip strategy (after {len(self.order_history)} transactions) --"
@@ -206,7 +205,7 @@ class Flipper:
             self.buyin = (1 - self.commission) * self.budget / self.last_price
             self.buyin_price = self.last_price
             amount = self.budget / 2
-            for _ in range(4):
+            for _ in range(int(self.split) // 2 - 1):
                 heappush(self.buy_heap, self.last_price)
 
         bought = (1 - self.commission) * amount / self.last_price
@@ -234,9 +233,7 @@ class Flipper:
         sold = amount / self.last_price
         # print("selling", amount, self.quote_asset, "available base", self.base, self.base_asset, "sold", sold)
         if not self.buy_heap:
-            # print(
-            #     f"/x Cannot sell outside buying heap"
-            # )
+            # print(f"/x Cannot sell outside buying heap")
             return
 
         cheapest = self.buy_heap[0] if self.buy_heap else 0
@@ -254,17 +251,17 @@ class Flipper:
         print(
             f"/: Sold {sold:.8f} {self.base_asset} at {self.last_price:.8f} {self.quote_asset} [{amount:.8f} {self.quote_asset}]"
         )
-        # profit = (self.last_price - cheapest) * sold * (1 - self.commission)
-        # print(f"   -- est. profit: {profit:.2f} {self.quote_asset}" )
-        # self.profit_history.append(profit)
 
-    def buy(self, amount, client):
+    def buy(self, client, amount):
 
-        if self.quote < (amount * 0.99):
+        if self.quote < amount:
             print(
                 f"x: Cannot buy {amount:.8f} {self.base_asset}, available {self.quote:.8f} {self.quote_asset} is not enough."
             )
             return
+
+        if not self.buyin:
+            amount = self.budget / 2
 
         try:
             response = client.new_order(
@@ -286,24 +283,27 @@ class Flipper:
         heappush(self.buy_heap, actual_price)
 
         if not self.buyin:
-            self.buyin = self.budget
+            self.buyin = bought
             self.buyin_price = actual_price
+            for _ in range(int(self.split // 2) - 1):
+                heappush(self.buy_heap, self.last_price)
 
         print(
             f".: Bought {bought:.8f} {self.base_asset} at {actual_price:.8f} {self.quote_asset} [{for_quote:.8f} {self.quote_asset}]"
         )
+        self.show_me_the_money()
+        self.save_order_book()
 
-    def sell(self, amount, client):
-        est_sold = 0.99 * amount / self.last_price
-        if est_sold > self.base:
-            print(
-                f"x: Cannot sell {est_sold:.8f} {self.base_asset}, only {self.base:.8f} is available"
-            )
+    def sell(self, client, amount):
+        if not self.buy_heap:
+            print(f"/x Cannot sell outside buying heap")
             return
 
-        cheapest = self.buy_heap[0]
+        cheapest = self.buy_heap[0] if self.buy_heap else 0
         if self.last_price <= (cheapest * (1 + self.commission)):
-            print(f"x: Cannot sell without profit, {self.last_price} < {cheapest}")
+            print(
+                f"x: Cannot sell without profit, {self.last_price} < {cheapest * (1 + self.commission)}"
+            )
             return
 
         try:
@@ -328,25 +328,26 @@ class Flipper:
         print(
             f"   Sold {sold:.8f} {self.base_asset} at {actual_price:.8f} {self.quote_asset} [{for_quote:.8f} {self.quote_asset}]"
         )
+        self.show_me_the_money()
+        self.save_order_book()
+
         print(
-            f"   -> last price {self.last_price:.8f} vs {actual_price:.8f} {self.quote_asset}"
+            f"   -> last price {self.last_price:.8f} vs actual {actual_price:.8f} {self.quote_asset}"
         )
         if actual_price < cheapest:
             print(
-                f"   Oops, I've made a sell without profit, delta: {cheapest - actual_price:.8f}"
+                f"Oops, I've made a sell without profit, delta: {cheapest - actual_price:.8f}"
             )
 
-    def feed(self, data):
-        self.consume(deque(data))
+    def feed(self, client, new_data):
+        self.consume(deque(new_data))
         signal = self.compute_signal()
 
         amount = self.budget / self.split
         if signal == FlipSignals.BUY:
-            self.buy(amount)
-            self.show_me_the_money()
+            self.buy(client, amount)
         elif signal == FlipSignals.SELL:
-            self.sell(amount)
-            self.show_me_the_money()
+            self.sell(client, amount)
 
         print(".", end="", flush=True)
 

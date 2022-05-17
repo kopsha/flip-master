@@ -2,6 +2,7 @@
 from argparse import ArgumentParser
 from datetime import datetime, timedelta
 from decimal import Decimal, getcontext
+from collections import deque
 from trade_clients import make_binance_test_client, make_binance_client
 from flipper import Flipper
 from binance.spot import Spot
@@ -103,14 +104,57 @@ def backtest(client: Spot, symbol, budget):
 
     pprint(sorted(together, key=lambda x: x[1], reverse=True))
 
+def tick(client, symbol, data, flippy):
+    cache_file = f"./{symbol}/klines.dat"
+    since = data[-1][6]
+    chunk = client.klines(symbol, "1m", startTime=since)
+    if chunk:
+        data += chunk
+        with open(cache_file, "wb") as data_file:
+            pickle.dump(data, data_file, protocol=pickle.HIGHEST_PROTOCOL)
+
+    flippy.feed(client, chunk)
+
 
 def run(client, symbol, budget):
 
-    # schedule.every().minute.at(":33").do(lambda: flippy.tick())
-    # while True:
-    #     schedule.run_pending()
-    #     time.sleep(0.618033988749894)
-    print("not implemented")
+    try:
+        account_data = client.account()
+        exchage_data = client.exchange_info(symbol)
+    except ClientError as error:
+        print("x: Cannot get exchage info:", error.error_message)
+        return -1
+
+    balances = account_data.pop("balances")
+    print("   Available assets:")
+    for balance in filter(lambda x: float(x["free"]) > 0, balances):
+        print("\t", balance["free"], balance["asset"])
+
+    symbol_data = exchage_data["symbols"][0]
+    getcontext().prec = max(
+        symbol_data["quoteAssetPrecision"], symbol_data["baseAssetPrecision"]
+    )
+
+    assert account_data["makerCommission"] == account_data["takerCommission"]
+    commission = Decimal(account_data["makerCommission"] or 10) / 10000
+    pair = (symbol_data["baseAsset"], symbol_data["quoteAsset"])
+
+    os.makedirs(f"./{symbol}", exist_ok=True)
+
+    try:
+        data = read_past_24h(client, symbol)
+    except ClientError as error:
+        print("x: Cannot read klines:", error.error_message)
+        return -1
+
+    flippy = Flipper(pair, budget, commission, split=10, window=34, factor=16)
+    flippy.consume(deque(data))
+    flippy.buy(client, Decimal(100))
+
+    schedule.every().minute.at(":13").do(lambda: tick(client, symbol, data, flippy))
+    while True:
+        schedule.run_pending()
+        time.sleep(0.618033988749894)
 
 
 if __name__ == "__main__":
@@ -133,6 +177,6 @@ if __name__ == "__main__":
     if actual.backtest:
         ret_code = backtest(client, actual.pair, actual.budget)
     else:
-        ret_code = run(client, actual.pair)
+        ret_code = run(client, actual.pair, actual.budget)
 
     exit(ret_code)
