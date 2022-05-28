@@ -1,19 +1,20 @@
 import pickle
-import os
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-from binance.spot import Spot
-from binance.error import ClientError
 from datetime import datetime
 from statistics import stdev, mean
 from collections import deque
 from decimal import Decimal
 from heapq import heappush, heappop
+
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+
+from binance.spot import Spot
+from binance.error import ClientError
+
 from metaflip import FlipSignals, KLinePoint, PricePoint, AssetMeta
 
 
 class Flipper:
-    # TODO: remove client dependency
     def __init__(self, pair, budget, commission, split=10, window=28, factor=2):
         self.base_asset, self.quote_asset = pair
         self.symbol = "".join(pair)
@@ -51,7 +52,6 @@ class Flipper:
         with open(orders_cache, "wb") as data_file:
             pickle.dump(self.order_history, data_file)
         print(f"Saved orders to {orders_cache}")
-
 
     @property
     def last_price(self):
