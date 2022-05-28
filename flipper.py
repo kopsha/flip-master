@@ -43,7 +43,7 @@ class Flipper:
         self.follow_up = None
 
         print(
-            f".: {pair} trader created, budget {budget:.8f} {self.quote_asset}, commission {commission * 100:.2f} %, {window} x {factor}"
+            f".: {pair} trader created, budget {budget} {self.quote_asset}, in {split} splits, commission {commission * 100:.2f} %, {window} x {factor}"
         )
 
     def save_order_book(self):
@@ -67,26 +67,25 @@ class Flipper:
         valued = self.base * self.last_price * (1 - self.commission) + self.quote
         performance = (valued - self.budget) * 100 / self.budget
         print(
-            f"   {self.base:.8f} {self.base_asset} + {self.quote:.8f} {self.quote_asset} \t\t\t==> {valued:.8f} {self.quote_asset} : {performance:.2f} % <=="
+            f"   {self.base:} {self.base_asset} + {self.quote:} {self.quote_asset} \t\t\t==> {valued:} {self.quote_asset} : {performance:.2f} % <=="
         )
         return performance
 
-    def draw_trading_chart(self, description, limit=1000):
-        since = max(len(self.prices) - limit, 0)
+    def draw_trading_chart(self, description):
         fig, axes = plt.subplots(1, 1, sharex=True, figsize=(15.7, 5.5), dpi=160)
 
         axes.plot(
-            self.timeline[since:],
-            self.bb_high[since:],
+            self.timeline,
+            self.bb_high,
             "r,:",
-            self.timeline[since:],
-            self.bb_low[since:],
+            self.timeline,
+            self.bb_low,
             "g,:",
-            self.timeline[since:],
-            self.bb_mean[since:],
+            self.timeline,
+            self.bb_mean,
             "y,:",
-            self.timeline[since:],
-            self.prices[since:],
+            self.timeline,
+            self.prices,
             "b,-",
             linewidth=0.5,
         )
@@ -212,7 +211,7 @@ class Flipper:
 
         if self.quote < amount:
             # print(
-            #     f"/x Cannot buy {bought:.8f} {self.base_asset}, available {self.quote:.8f} {self.quote_asset} is not enough."
+            #     f"/x Cannot buy {bought} {self.base_asset}, available {self.quote} {self.quote_asset} is not enough."
             # )
             return
 
@@ -224,7 +223,7 @@ class Flipper:
         heappush(self.buy_heap, self.last_price)
 
         print(
-            f"/: Bought {bought:.8f} {self.base_asset} at {self.last_price:.8f} {self.quote_asset} [{amount:.8f} {self.quote_asset}]"
+            f"/: Bought {bought} {self.base_asset} at {self.last_price} {self.quote_asset} [{amount} {self.quote_asset}]"
         )
         return
 
@@ -249,14 +248,14 @@ class Flipper:
         heappop(self.buy_heap)
 
         print(
-            f"/: Sold {sold:.8f} {self.base_asset} at {self.last_price:.8f} {self.quote_asset} [{amount:.8f} {self.quote_asset}]"
+            f"/: Sold {sold} {self.base_asset} at {self.last_price} {self.quote_asset} [{amount} {self.quote_asset}]"
         )
 
     def buy(self, client, amount):
 
         if self.quote < amount:
             print(
-                f"x: Cannot buy {amount:.8f} {self.base_asset}, available {self.quote:.8f} {self.quote_asset} is not enough."
+                f"x: Cannot buy {amount} {self.base_asset}, available {self.quote} {self.quote_asset} is not enough."
             )
             return
 
@@ -289,7 +288,7 @@ class Flipper:
                 heappush(self.buy_heap, self.last_price)
 
         print(
-            f".: Bought {bought:.8f} {self.base_asset} at {actual_price:.8f} {self.quote_asset} [{for_quote:.8f} {self.quote_asset}]"
+            f".: Bought {bought} {self.base_asset} at {actual_price} {self.quote_asset} [{for_quote} {self.quote_asset}]"
         )
         self.show_me_the_money()
         self.save_order_book()
@@ -326,17 +325,17 @@ class Flipper:
         heappop(self.buy_heap)
 
         print(
-            f"   Sold {sold:.8f} {self.base_asset} at {actual_price:.8f} {self.quote_asset} [{for_quote:.8f} {self.quote_asset}]"
+            f"   Sold {sold} {self.base_asset} at {actual_price} {self.quote_asset} [{for_quote} {self.quote_asset}]"
         )
         self.show_me_the_money()
         self.save_order_book()
 
         print(
-            f"   -> last price {self.last_price:.8f} vs actual {actual_price:.8f} {self.quote_asset}"
+            f"   -> last price {self.last_price} vs actual {actual_price} {self.quote_asset}"
         )
         if actual_price < cheapest:
             print(
-                f"Oops, I've made a sell without profit, delta: {cheapest - actual_price:.8f}"
+                f"Oops, I've made a sell without profit, delta: {cheapest - actual_price}"
             )
 
     def feed(self, client, new_data):

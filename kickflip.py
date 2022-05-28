@@ -78,17 +78,22 @@ def backtest(client: Spot, symbol, budget):
         return -1
 
     window_perf = dict()
-    for window in [5, 8, 13, 21, 34, 55]:
+    for window in [5, 8]: #, 13, 21, 34, 55]:
 
         factor_results = dict()
-        for iff in range(15, 28):
+        for iff in range(15, 21): # 28):
             factor = Decimal(iff) / 10
             flippy = Flipper(
                 pair, budget, commission, split=10, window=window, factor=factor
             )
+            # continue
             factor_results[factor] = flippy.backtest(
                 data, f"backtest_{window}x{factor}"
             )
+
+            # pprint(flippy.order_history[:3])
+            # pprint(flippy.timeline[:10])
+            # return
 
         fact_performance = list(
             sorted(factor_results.items(), key=lambda x: x[1], reverse=True)
@@ -147,7 +152,7 @@ def run(client, symbol, budget):
         print("x: Cannot read klines:", error.error_message)
         return -1
 
-    flippy = Flipper(pair, budget, commission, split=10, window=34, factor=16)
+    flippy = Flipper(pair, budget, commission, split=10, window=13, factor=2.1)
     flippy.consume(deque(data))
     flippy.buy(client, Decimal(100))
 
@@ -161,7 +166,7 @@ if __name__ == "__main__":
 
     args = ArgumentParser(description="Trading on the flip side")
     args.add_argument("--pair", required=True)
-    args.add_argument("--budget", type=float, required=True)
+    args.add_argument("--budget", type=Decimal, required=True)
     args.add_argument("--go-live", action="store_const", const=True, default=False)
     args.add_argument("--backtest", action="store_const", const=True, default=False)
 
