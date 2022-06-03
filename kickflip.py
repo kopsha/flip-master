@@ -47,22 +47,12 @@ def read_past_24h(client, symbol):
     return data
 
 
-def read_chunk(client, symbol):
-    cache_file = f"./{symbol}/klines.dat"
-    data = list()
+def read_last_days(client, symbol, days):
+    segments = list()
+
     now = datetime.now()
-    recent = int((now - timedelta(minutes=1)).timestamp()) * 1000
-
-    if os.path.isfile(cache_file):
-        with open(cache_file, "rb") as data_file:
-            data += pickle.load(data_file)
-        print(f"Read {len(data)} records from {cache_file}")
-
-    if data:
-        since = data[-1][6]
-    else:
-        past = now - timedelta(days=1)
-        since = int(past.timestamp() * 1000)
+    recent = int((now - timedelta(minutes=2)).timestamp()) * 1000
+    since = int((now - timedelta(days=days)).timestamp()) * 1000
 
     while since < recent:
         chunk = client.klines(symbol, "1m", startTime=since, limit=1000)
@@ -72,6 +62,25 @@ def read_chunk(client, symbol):
         with open(cache_file, "wb") as data_file:
             pickle.dump(data, data_file, protocol=pickle.HIGHEST_PROTOCOL)
             print(f".: Cached {len(data)} to {cache_file}")
+
+        time.sleep(1)
+
+    return data
+
+
+def read_chunk(client, symbol):
+    cache_file = f"./{symbol}/klines.dat"
+    data = list()
+
+    if os.path.isfile(cache_file):
+        with open(cache_file, "rb") as data_file:
+            data += pickle.load(data_file)
+        print(f"Read {len(data)} records from {cache_file}")
+    else:
+        data += client.klines(symbol, "1m", limit=1000)
+        with open(cache_file, "wb") as data_file:
+            pickle.dump(data, data_file, protocol=pickle.HIGHEST_PROTOCOL)
+            print(f"Cached {len(data)} to {cache_file}")
 
         time.sleep(1)
 

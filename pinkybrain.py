@@ -4,6 +4,8 @@ from heapq import heappush, heappop
 
 import pandas as pd
 import mplfinance as mpf
+from matplotlib import pyplot as plt
+from matplotlib import ticker
 
 from metaflip import CandleStick
 
@@ -28,23 +30,14 @@ class PinkyBrain:
         df = pd.DataFrame(klines)
         df.index = pd.DatetimeIndex(df["close_time"])
 
-        df["stdev"] = df["typical_price"].rolling(8).std(ddof=0)
-        df["sma"] = df["typical_price"].rolling(8).mean()
-        df["top"] = df["sma"] + 2 * df["stdev"]
-        df["bottom"] = df["sma"] - 2 * df["stdev"]
-        df["velocity"] = df["sma"].diff()
+        window = 13
+        factor = 2
 
-        trends = dict(
-            colors=["r", "g"],
-            # linewidths=5,
-            alpha=0.28,
-            alines=[list(), list()]
-        )
-        for _, row in df.iterrows():
-            if float(row["low"]) <= row["bottom"]:
-                trends["alines"][0].append((row["close_time"], float(row["low"])))
-            if float(row["high"]) >= row["top"]:
-                trends["alines"][1].append((row["close_time"], float(row["high"])))
+        df["stdev"] = df["typical_price"].rolling(window).std(ddof=0)
+        df["sma"] = df["typical_price"].rolling(window).mean()
+        df["top"] = df["sma"] + factor * df["stdev"]
+        df["bottom"] = df["sma"] - factor * df["stdev"]
+        df["diff"] = df["close"].diff()
 
         df = df.astype(
             {
@@ -56,16 +49,42 @@ class PinkyBrain:
                 "bottom": "float",
             }
         )
+
+
+        trend_roots = dict(
+            alines=[list(), list()],
+            colors=["r", "g"],
+            linewidths=1,
+            alpha=0.21,
+        )
+
+        for (_, previous), (_, current) in zip(df[:-1].iterrows(),df[1:].iterrows()):
+            if previous["diff"] < 0 and current["diff"] > 0:
+                trend_roots["alines"][0].append((current["close_time"], current["low"]))
+            elif previous["diff"] > 0 and current["diff"] < 0:
+                trend_roots["alines"][1].append((current["close_time"], current["high"]))
+
         extras = [
-            mpf.make_addplot(df["typical_price"]),
-            # mpf.make_addplot(df["top"], color="green"),
-            # mpf.make_addplot(df["bottom"], color="red"),
+            # mpf.make_addplot(df["typical_price"]),
+            mpf.make_addplot(df["top"], color="olive"),
+            mpf.make_addplot(df["bottom"], color="brown"),
+            # mpf.make_addplot(df["diff"], color="green", panel=1),
         ]
-        mpf.plot(
+
+        fig, axes = mpf.plot(
             df,
             type="candle",
             addplot=extras,
-            alines=trends,
+            alines=trend_roots,
+            title=f"{self.base_symbol}/{self.quote_symbol}",
             volume=True,
+            figsize=(15.7, 5.5),
+            tight_layout=True,
+            style="yahoo",
             warn_too_much_data=1000,
+            returnfig=True,
         )
+        # axes[0].set_yscale("log")
+        # axes[0].yaxis.set_major_formatter(ticker.ScalarFormatter())
+        # axes[0].yaxis.set_minor_formatter(ticker.ScalarFormatter())
+        plt.show()
