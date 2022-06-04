@@ -75,7 +75,7 @@ def run(client, symbol, budget):
         print("x: Cannot read klines:", error.error_message)
         return -1
 
-    flippy = PinkyTracker(pair, budget, commission, 13, 2)
+    flippy = PinkyTracker(pair, budget, commission, wix=5)
     flippy.feed(data)
     flippy.backtest()
     flippy.draw_chart()
