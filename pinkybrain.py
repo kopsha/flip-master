@@ -1,6 +1,7 @@
 from decimal import Decimal
 import pandas as pd
 import mplfinance as mpf
+from matplotlib import pyplot as plt
 from ta.volatility import BollingerBands
 from ta.momentum import tsi
 from ta.volume import money_flow_index
@@ -33,7 +34,7 @@ class PinkyTracker:
         self.is_committed = False
 
         # some parameters
-        self.stop_loss_factor = commission * 4
+        self.stop_loss_factor = commission * 8
         self.wix = wix
 
         # running data
@@ -236,13 +237,18 @@ class PinkyTracker:
             type="candle",
             addplot=extras,
             title=f"{self.base_symbol}/{self.quote_symbol}",
-            # volume=True,
-            # figsize=(15.7, 5.5),
+            volume=True,
+            figsize=(13, 8),
             tight_layout=True,
             style="yahoo",
             warn_too_much_data=1000,
             returnfig=True,
         )
+
+        for ax in axes:
+            ax.yaxis.tick_left()
+            ax.yaxis.label.set_visible(False)
+            ax.margins(0.0)
 
         for signal, time, price in self.order_history:
             fig.axes[0].annotate(
@@ -256,16 +262,8 @@ class PinkyTracker:
                 verticalalignment="center",
                 arrowprops=dict(arrowstyle="->"),
             )
-            fig.axes[2].annotate(
-                signal.name,
-                xy=(time, df["tsi"].iloc[time]),
-                fontsize="small",
-                xytext=((-0, +55.0) if signal == FlipSignals.SELL else (-0, -55.0)),
-                textcoords="offset pixels",
-                color="green" if signal == FlipSignals.SELL else "red",
-                horizontalalignment="center",
-                verticalalignment="center",
-                arrowprops=dict(arrowstyle="->"),
-            )
 
-        mpf.show()
+        fig.subplots_adjust(left=0, bottom=0, right=1, top=1, wspace=0, hspace=0)
+        fig.tight_layout(pad=0.3)
+        # plt.savefig('image.png', bbox_inches='tight', pad_inches = 0.1)
+        plt.show()
