@@ -52,15 +52,11 @@ class CandleStick:
 
 class FlipSignals(Enum):
     HOLD = 0
-    ENTRY = 1
+    BUY = 1
     SELL = 2
-    BUY = 3
-    EXIT = 4
 
     AS_STR = {
         0: "hold",
-        1: "entry",
+        1: "buy",
         2: "sell",
-        3: "buy",
-        4: "exit",
     }

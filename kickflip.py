@@ -11,92 +11,37 @@ from collections import deque
 from trade_clients import make_binance_test_client, make_binance_client
 from binance.error import ClientError
 
-from pinkybrain import PinkyBrain
-
+from pinkybrain import PinkyTracker
 from pprint import pprint
 
 
-def read_past_24h(client, symbol):
-    cache_file = f"./{symbol}/klines.dat"
+def smart_read(client, symbol):
     data = list()
     now = datetime.now()
-    recent = int((now - timedelta(minutes=1)).timestamp()) * 1000
+    since = int((now - timedelta(minutes=1000)).timestamp()) * 1000
+    enough = int((now - timedelta(minutes=1)).timestamp()) * 1000
 
+    cache_file = f"./{symbol}/klines.dat"
     if os.path.isfile(cache_file):
         with open(cache_file, "rb") as data_file:
             data += pickle.load(data_file)
         print(f"Read {len(data)} records from {cache_file}")
 
-    if data:
+    if data and data[-1][6] > since:
+        # we only want the last 1000 minutes
         since = data[-1][6]
-    else:
-        past = now - timedelta(days=1)
-        since = int(past.timestamp() * 1000)
 
-    while since < recent:
-        chunk = client.klines(symbol, "1m", startTime=since, limit=1000)
-        since = chunk[-1][6]  # ATTENTION: close_time
-        data += chunk
+    if since < enough:
+        missing_chunk = client.klines(symbol, "1m", startTime=since, limit=1000)
+        data += missing_chunk
+        print(f"Read {len(missing_chunk)} records from client.")
 
         with open(cache_file, "wb") as data_file:
-            pickle.dump(data, data_file, protocol=pickle.HIGHEST_PROTOCOL)
-            print(f".: Cached {len(data)} to {cache_file}")
+            useful_data = data[-1000:]
+            pickle.dump(useful_data, data_file, protocol=pickle.HIGHEST_PROTOCOL)
+            print(f".: Cached {len(useful_data)} to {cache_file}")
 
-        time.sleep(1)
-
-    return data
-
-
-def read_last_days(client, symbol, days):
-    segments = list()
-
-    now = datetime.now()
-    recent = int((now - timedelta(minutes=2)).timestamp()) * 1000
-    since = int((now - timedelta(days=days)).timestamp()) * 1000
-
-    while since < recent:
-        chunk = client.klines(symbol, "1m", startTime=since, limit=1000)
-        since = chunk[-1][6]  # ATTENTION: close_time
-        data += chunk
-
-        with open(cache_file, "wb") as data_file:
-            pickle.dump(data, data_file, protocol=pickle.HIGHEST_PROTOCOL)
-            print(f".: Cached {len(data)} to {cache_file}")
-
-        time.sleep(1)
-
-    return data
-
-
-def read_chunk(client, symbol):
-    cache_file = f"./{symbol}/klines.dat"
-    data = list()
-
-    if os.path.isfile(cache_file):
-        with open(cache_file, "rb") as data_file:
-            data += pickle.load(data_file)
-        print(f"Read {len(data)} records from {cache_file}")
-    else:
-        data += client.klines(symbol, "1m", limit=1000)
-        with open(cache_file, "wb") as data_file:
-            pickle.dump(data, data_file, protocol=pickle.HIGHEST_PROTOCOL)
-            print(f"Cached {len(data)} to {cache_file}")
-
-        time.sleep(1)
-
-    return data
-
-
-def tick(client, symbol, data, flippy):
-    cache_file = f"./{symbol}/klines.dat"
-    since = data[-1][6]
-    chunk = client.klines(symbol, "1m", startTime=since)
-    if chunk:
-        data += chunk
-        with open(cache_file, "wb") as data_file:
-            pickle.dump(data, data_file, protocol=pickle.HIGHEST_PROTOCOL)
-
-    flippy.feed(client, chunk)
+    return data[-1000:]
 
 
 def run(client, symbol, budget):
@@ -125,13 +70,15 @@ def run(client, symbol, budget):
     os.makedirs(f"./{symbol}", exist_ok=True)
 
     try:
-        data = read_chunk(client, symbol)
+        data = smart_read(client, symbol)
     except ClientError as error:
         print("x: Cannot read klines:", error.error_message)
         return -1
 
-    flippy = PinkyBrain(pair, budget, commission)
+    flippy = PinkyTracker(pair, budget, commission, 13, 2)
     flippy.feed(data)
+    flippy.backtest()
+    flippy.draw_chart()
 
     # schedule.every().minute.at(":13").do(lambda: tick(client, symbol, data, flippy))
     # while True:
@@ -157,4 +104,5 @@ if __name__ == "__main__":
 
     ret_code = run(client, actual.pair, actual.budget)
 
+    time.sleep(0.5)
     exit(ret_code)
