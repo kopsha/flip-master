@@ -23,7 +23,8 @@ class PinkyTracker:
     ]
     MFI_HIGH = 65
     MFI_LOW = 27
-    TSI_TOLERANCE = 10
+    TSI_HIGH = 25
+    TSI_LOW = -25
     VELOCITY_TOLERANCE = 8
 
     def __init__(self, trading_pair, budget, commission, wix):
@@ -88,7 +89,7 @@ class PinkyTracker:
             window_fast=self.window,
             window_slow=self.slow_window,
         )
-        self.data["trend_velocity"] = self.data["tsi"].diff()
+        self.data["tsi_slope"] = self.data["tsi"].diff()
 
         df = self.data.astype(
             {
@@ -147,22 +148,30 @@ class PinkyTracker:
     def backtest(self):
         next_move = None
         tolerance = 0.0015
+
+        signals = dict(
+            bb=None,
+            mfi=None,
+            tsi=None,
+        )
+
         for i, (_, row) in enumerate(self.data.iterrows()):
+            # each tick
             price = float(row["low"])
             if not self.is_committed:
                 if (
                     next_move == FlipSignals.BUY
-                    and (row["trend_velocity"] + self.VELOCITY_TOLERANCE) > 0
+                    and (row["tsi_slope"] + self.VELOCITY_TOLERANCE) > 0
                 ):
                     self.buy_in(i, row["close"])
                     next_move = None
                 elif (
                     next_move is None
                     and row["mfi"] < self.MFI_LOW
-                    and row["tsi"] > -self.TSI_TOLERANCE
+                    and row["tsi"] > self.TSI_LOW
                     and price <= (row["bb_low"] * (1 + tolerance))
                 ):
-                    if (row["trend_velocity"] + self.VELOCITY_TOLERANCE) > 0:
+                    if (row["tsi_slope"] + self.VELOCITY_TOLERANCE) > 0:
                         self.buy_in(i, row["close"])
                     else:
                         next_move = FlipSignals.BUY
@@ -175,7 +184,7 @@ class PinkyTracker:
 
                 if (
                     next_move == FlipSignals.SELL
-                    # and (row["trend_velocity"] - self.VELOCITY_TOLERANCE) < 0
+                    # and (row["tsi_slope"] - self.VELOCITY_TOLERANCE) < 0
                     and row["velocity"] <= 0
                 ):
                     self.sell_out(i, row["close"])
@@ -186,7 +195,7 @@ class PinkyTracker:
                     and price >= (row["bb_high"] * (1 - tolerance))
                     and row["velocity"] <= 0
                 ):
-                    if (row["trend_velocity"] - self.VELOCITY_TOLERANCE) > 0:
+                    if (row["tsi_slope"] - self.VELOCITY_TOLERANCE) > 0:
                         self.sell_out(i, row["close"])
                     else:
                         next_move = FlipSignals.SELL
@@ -202,8 +211,9 @@ class PinkyTracker:
             }
         )
 
-        df["tsi-high"] = self.TSI_TOLERANCE
-        df["tsi-low"] = -self.TSI_TOLERANCE
+        df["tsi-high"] = self.TSI_HIGH
+        df["tsi-low"] = self.TSI_LOW
+        tsi_colors = ["red" if s < 0 else "green" for s in df["tsi_slope"]]
 
         df["mfi-high"] = self.MFI_HIGH
         df["mfi-low"] = self.MFI_LOW
@@ -213,16 +223,14 @@ class PinkyTracker:
             mpf.make_addplot(df["bb_ma"], color="blue", secondary_y=False, alpha=0.35),
             mpf.make_addplot(df["bb_low"], color="brown", secondary_y=False, alpha=0.35),
 
-            mpf.make_addplot(df["tsi"], color="red", secondary_y=False, panel=1),
+            mpf.make_addplot(df["tsi"], type="bar", color=tsi_colors, secondary_y=False, panel=1),
             mpf.make_addplot(
                 df["tsi-high"], color="olive", alpha=0.35, secondary_y=False, panel=1
             ),
             mpf.make_addplot(
                 df["tsi-low"], color="brown", alpha=0.35, secondary_y=False, panel=1
             ),
-            mpf.make_addplot(
-                df["trend_velocity"], color="pink", secondary_y=False, panel=1
-            ),
+
             mpf.make_addplot(df["mfi"], color="red", secondary_y=False, panel=2),
             mpf.make_addplot(
                 df["mfi-high"], color="olive", alpha=0.35, secondary_y=False, panel=2
@@ -237,7 +245,7 @@ class PinkyTracker:
             type="candle",
             addplot=extras,
             title=f"{self.base_symbol}/{self.quote_symbol}",
-            volume=True,
+            # volume=True,
             figsize=(13, 8),
             tight_layout=True,
             style="yahoo",
