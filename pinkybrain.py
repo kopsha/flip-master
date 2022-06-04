@@ -1,15 +1,30 @@
 from decimal import Decimal
-from itertools import repeat
+from math import isclose
 import pandas as pd
 import mplfinance as mpf
 from ta.volatility import BollingerBands
-from ta.momentum import tsi
+from ta.momentum import tsi, awesome_oscillator
 from ta.volume import money_flow_index
 from metaflip import CandleStick, FlipSignals
 
 
 class PinkyTracker:
-    FF = [1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144,]
+    FF = [
+        2,
+        3,
+        5,
+        8,
+        13,
+        21,
+        34,
+        55,
+        89,
+        144,
+    ]
+    MFI_HIGH = 70
+    MFI_LOW = 30
+    TSI_TOLERANCE = 10
+    VELOCITY_TOLERANCE = 5
 
     def __init__(self, trading_pair, budget, commission, wix):
         self.base_symbol, self.quote_symbol = trading_pair
@@ -17,7 +32,6 @@ class PinkyTracker:
         self.quote = Decimal(budget)
         self.base = Decimal("0")
         self.is_committed = False
-
 
         # some parameters
         self.stop_loss_factor = self.commission * 5
@@ -30,7 +44,7 @@ class PinkyTracker:
     def __repr__(self) -> str:
         last_price = self.data["close"].iloc[-1]
         est_value = (1 - self.commission) * self.base * last_price + self.quote
-        return f"{self.base} {self.base_symbol} + {self.quote} {self.quote_symbol} => {est_value} {self.quote_symbol}"
+        return f"{self.base:.8f} {self.base_symbol} + {self.quote} {self.quote_symbol} => {est_value} {self.quote_symbol}"
 
     @property
     def window(self):
@@ -65,7 +79,11 @@ class PinkyTracker:
         self.data["bb_high"] = bb.bollinger_hband()
         self.data["bb_low"] = bb.bollinger_lband()
 
-        self.data["tsi"] = tsi(close=self.data["close"], window_fast=self.fast_window, window_slow=self.slow_window)
+        self.data["tsi"] = tsi(
+            close=self.data["close"],
+            window_fast=self.window,
+            window_slow=self.slow_window,
+        )
         self.data["trend_velocity"] = self.data["tsi"].diff()
 
         df = self.data.astype(
@@ -83,7 +101,10 @@ class PinkyTracker:
             volume=df["volume"],
             window=self.window,
         )
-
+        self.data["aosc"] = awesome_oscillator(
+            high=df["high"],
+            low=df["low"],
+        )
 
     def buy_in(self, itime, price):
         self.is_committed = True
@@ -118,29 +139,42 @@ class PinkyTracker:
 
     def backtest(self):
         next_move = None
-
         for i, (_, row) in enumerate(self.data.iterrows()):
-            price = float(row["close"])
+            price = float(row["low"])
+            tolerance = 0.001
             if not self.is_committed:
-                # look for a good entry point
-                if next_move == FlipSignals.BUY and row["trend_velocity"] >= 0:
+                if (
+                    next_move == FlipSignals.BUY
+                    and (row["trend_velocity"] + self.VELOCITY_TOLERANCE) > 0
+                ):
                     self.buy_in(i, row["close"])
                     next_move = None
-                elif next_move is None and price <= row["bb_low"]:
-                    if row["tsi"] < -5 and row["trend_velocity"] < 0 and row["mfi"] < 25:
-                        next_move = FlipSignals.BUY
-                    else:
+                elif (
+                    next_move is None
+                    and row["mfi"] < self.MFI_LOW
+                    and row["tsi"] > -self.TSI_TOLERANCE
+                    and (price * (1 - tolerance)) <= row["bb_low"]
+                ):
+                    if (row["trend_velocity"] + self.VELOCITY_TOLERANCE) > 0:
                         self.buy_in(i, row["close"])
+                    else:
+                        next_move = FlipSignals.BUY
             else:
-                # look for the next exit point
-                if next_move == FlipSignals.SELL and row["trend_velocity"] <= 0:
+                if (
+                    next_move == FlipSignals.SELL
+                    and (row["trend_velocity"] - self.VELOCITY_TOLERANCE) < 0
+                ):
                     self.sell_out(i, row["close"])
                     next_move = None
-                elif next_move is None and price >= row["bb_high"]:
-                    if row["tsi"] > 5 and row["trend_velocity"] > 0 and row["mfi"] > 75:
-                        next_move = FlipSignals.SELL
-                    else:
+                elif (
+                    next_move is None
+                    and row["mfi"] > self.MFI_HIGH
+                    and (price * (1 + tolerance)) >= row["bb_high"]
+                ):
+                    if (row["trend_velocity"] - self.VELOCITY_TOLERANCE) > 0:
                         self.sell_out(i, row["close"])
+                    else:
+                        next_move = FlipSignals.SELL
 
     def draw_chart(self):
 
@@ -153,18 +187,38 @@ class PinkyTracker:
             }
         )
 
-        df["mfi-high"] = 70
-        df["mfi-low"] = 30
+        df["tsi-high"] = self.TSI_TOLERANCE
+        df["tsi-low"] = -self.TSI_TOLERANCE
+
+        df["mfi-high"] = self.MFI_HIGH
+        df["mfi-low"] = self.MFI_LOW
+
+        aosc_colors = ["green" if x >= 0 else "red" for x in df["aosc"].diff()]
 
         extras = [
-            mpf.make_addplot(df["bb_high"], color="olive", alpha=0.35),
-            mpf.make_addplot(df["bb_ma"], color="blue", alpha=0.35),
-            mpf.make_addplot(df["bb_low"], color="brown", alpha=0.35),
+            mpf.make_addplot(df["bb_high"], color="olive", secondary_y=False, alpha=0.35),
+            mpf.make_addplot(df["bb_ma"], color="blue", secondary_y=False, alpha=0.35),
+            mpf.make_addplot(df["bb_low"], color="brown", secondary_y=False, alpha=0.35),
+
             mpf.make_addplot(df["tsi"], color="red", secondary_y=False, panel=1),
-            mpf.make_addplot(df["trend_velocity"], color="pink", secondary_y=False, panel=1),
+            mpf.make_addplot(
+                df["tsi-high"], color="olive", alpha=0.35, secondary_y=False, panel=1
+            ),
+            mpf.make_addplot(
+                df["tsi-low"], color="brown", alpha=0.35, secondary_y=False, panel=1
+            ),
+            mpf.make_addplot(
+                df["trend_velocity"], color="pink", secondary_y=False, panel=1
+            ),
             mpf.make_addplot(df["mfi"], color="red", secondary_y=False, panel=2),
-            mpf.make_addplot(df["mfi-low"], color="brown", alpha=0.35, secondary_y=False, panel=2),
-            mpf.make_addplot(df["mfi-high"], color="olive", alpha=0.35, secondary_y=False, panel=2),
+            mpf.make_addplot(
+                df["mfi-high"], color="olive", alpha=0.35, secondary_y=False, panel=2
+            ),
+            mpf.make_addplot(
+                df["mfi-low"], color="brown", alpha=0.35, secondary_y=False, panel=2
+            ),
+
+            mpf.make_addplot(df["aosc"], type="bar", color=aosc_colors, panel=3),
         ]
 
         fig, axes = mpf.plot(
@@ -173,7 +227,7 @@ class PinkyTracker:
             addplot=extras,
             title=f"{self.base_symbol}/{self.quote_symbol}",
             # volume=True,
-            figsize=(15.7, 5.5),
+            # figsize=(15.7, 5.5),
             tight_layout=True,
             style="yahoo",
             warn_too_much_data=1000,
@@ -185,9 +239,7 @@ class PinkyTracker:
                 signal.name,
                 xy=(time, price),
                 fontsize="small",
-                xytext=(
-                    (-0, +55.0) if signal == FlipSignals.SELL else (-0, -55.0)
-                ),
+                xytext=((-0, +55.0) if signal == FlipSignals.SELL else (-0, -55.0)),
                 textcoords="offset pixels",
                 color="green" if signal == FlipSignals.SELL else "red",
                 horizontalalignment="center",
@@ -198,9 +250,7 @@ class PinkyTracker:
                 signal.name,
                 xy=(time, df["tsi"].iloc[time]),
                 fontsize="small",
-                xytext=(
-                    (-0, +55.0) if signal == FlipSignals.SELL else (-0, -55.0)
-                ),
+                xytext=((-0, +55.0) if signal == FlipSignals.SELL else (-0, -55.0)),
                 textcoords="offset pixels",
                 color="green" if signal == FlipSignals.SELL else "red",
                 horizontalalignment="center",
