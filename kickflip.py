@@ -84,16 +84,12 @@ def run(client: Spot, symbol: str, budget: Decimal):
         wallet_value += value
     print(f"               (value) {wallet_value:12.2f} EUR")
 
-
     os.makedirs(f"./{symbol}", exist_ok=True)
     try:
         data = smart_read(client, symbol)
     except ClientError as error:
         print("x: Cannot read klines:", error.error_message)
         return -1
-
-    from pprint import pprint
-    pprint(data[-10:])
 
     pair = (symbol_data["baseAsset"], symbol_data["quoteAsset"])
     flippy = PinkyTracker(pair, budget, commission, wix=5)

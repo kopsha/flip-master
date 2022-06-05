@@ -2,8 +2,8 @@ from decimal import Decimal
 import pandas as pd
 import mplfinance as mpf
 from matplotlib import pyplot as plt
-from ta.volatility import BollingerBands, ulcer_index
-from ta.trend import AroonIndicator
+from ta.volatility import BollingerBands
+from ta.trend import ADXIndicator, PSARIndicator, stc
 from ta.volume import money_flow_index
 from metaflip import CandleStick, FlipSignals, MAX_CANDLESTICKS
 
@@ -21,8 +21,9 @@ class PinkyTracker:
         89,
         144,
     ]
-    MFI_HIGH = 70
-    MFI_LOW = 30
+    SIGNAL_TTL = 3
+    MFI_HIGH = 65
+    MFI_LOW = 35
 
     def __init__(self, trading_pair, budget, commission, wix):
         self.base_symbol, self.quote_symbol = trading_pair
@@ -51,11 +52,19 @@ class PinkyTracker:
         return self.FF[self.wix]
 
     @property
+    def faster_window(self):
+        return self.FF[self.wix - 1]
+
+    @property
     def fast_window(self):
         return self.FF[self.wix - 1]
 
     @property
     def slow_window(self):
+        return self.FF[self.wix + 1]
+
+    @property
+    def slower_window(self):
         return self.FF[self.wix + 1]
 
     def feed(self, kline_data):
@@ -85,21 +94,43 @@ class PinkyTracker:
             }
         )
 
-        bb = BollingerBands(close=self.data["close"], window=self.window)
-        self.data["bb_ma"] = bb.bollinger_mavg()
-        self.data["bb_high"] = bb.bollinger_hband()
-        self.data["bb_low"] = bb.bollinger_lband()
-
-        self.data["ulcer"] = ulcer_index(close=df["close"], window=self.window)
-        self.data["ulcer_slope"] = self.data["ulcer"].diff()
-
         self.data["mfi"] = money_flow_index(
             high=df["high"],
             low=df["low"],
             close=df["close"],
             volume=df["volume"],
-            window=self.window,
+            window=self.fast_window,
         )
+
+        bb = BollingerBands(close=df["close"], window=self.window)
+        self.data["bb_ma"] = bb.bollinger_mavg()
+        self.data["bb_high"] = bb.bollinger_hband()
+        self.data["bb_low"] = bb.bollinger_lband()
+
+        adx = ADXIndicator(
+            high=df["high"],
+            low=df["low"],
+            close=df["close"],
+            window=self.faster_window,
+        )
+        self.data["adx"] = adx.adx()
+        self.data["adx_plus"] = adx.adx_pos()
+        self.data["adx_minus"] = adx.adx_neg()
+
+        psar = PSARIndicator(high=df["high"], low=df["low"], close=df["close"], step=0.01)
+        self.data["psar_up"] = psar.psar_up()
+        self.data["psar_down"] = psar.psar_down()
+        self.data["psar_up_sig"] = psar.psar_up_indicator()
+        self.data["psar_down_sig"] = psar.psar_down_indicator()
+
+        self.data["stc"] = stc(
+            self.data["close"],
+            window_slow=self.slower_window,
+            window_fast=self.window,
+            cycle=self.window,
+        )
+        self.data["stc_slope"] = self.data["stc"].diff()
+
 
     def buy_in(self, itime, price):
         spent = self.quote
@@ -121,9 +152,9 @@ class PinkyTracker:
         sold = self.base
         amount = (1 - self.commission) * sold * price
         profit = amount - self.spent
-        if profit < 0:
-            print("Not selling without profit", profit, self.quote_symbol)
-            return
+        # if profit < 0:
+        #     print("Not selling without profit", profit, self.quote_symbol)
+        #     return
 
         self.base -= sold
         self.quote += amount
@@ -136,64 +167,94 @@ class PinkyTracker:
             f" Sold  {sold} {self.base_symbol} at {price} {self.quote_symbol} for {profit} {self.quote_symbol} profit [Wallet: {self.quote} {self.quote_symbol}]"
         )
 
-    def backtest(self):
-
-        TTL = 4
-        meta_signals = dict(
-            bb=(FlipSignals.HOLD, None),
-            mfi=(FlipSignals.HOLD, None),
-            ulcer=(FlipSignals.HOLD, None),
-        )
-
-        def age_meta_signal(key):
+    def age_meta_signals(self, meta_signals):
+        aged_meta_signals = dict()
+        for key in meta_signals:
             ms, ttl = meta_signals[key]
             if ms != FlipSignals.HOLD:
                 ttl -= 1
-                meta_signals[key] = (ms, ttl) if ttl else (FlipSignals.HOLD, None)
+                if ttl == 0:
+                    ms = FlipSignals.HOLD
+                    ttl = None
+            aged_meta_signals[key] = (ms, ttl)
+        return aged_meta_signals
 
-        def meta_signals_are_aligned():
-            mss = set(ms for ms, ttl in meta_signals.values())
-            return mss.pop() if len(mss) == 1 else None
+    def apply_money_flow(self, row, previous):
+        if row["mfi"] >= self.MFI_HIGH:
+            ms, ttl = FlipSignals.SELL, self.SIGNAL_TTL
+        elif row["mfi"] <= self.MFI_LOW:
+            ms, ttl = FlipSignals.BUY, self.SIGNAL_TTL
+        else:
+            ms, ttl = previous or (FlipSignals.HOLD, None)
+        return ms, ttl
 
+    def apply_bollinger_bands(self, row, previous):
         tolerance = 0.001
+        bb_high = row["bb_high"] * (1 - tolerance)
+        bb_low = row["bb_low"] * (1 + tolerance)
+
+        if float(row["high"]) >= bb_high and row["slope"] < 0:
+            ms, ttl = FlipSignals.SELL, self.SIGNAL_TTL
+        elif float(row["low"]) <= bb_low and row["slope"] > 0:
+            ms, ttl = FlipSignals.BUY, self.SIGNAL_TTL
+        else:
+            ms, ttl = previous or (FlipSignals.HOLD, None)
+        return ms, ttl
+
+    def apply_psar_signals(self, row, previous):
+        if row.isna()["psar_up"]:
+            ms, ttl = FlipSignals.SELL, self.SIGNAL_TTL
+        elif row.isna()["psar_down"]:
+            ms, ttl = FlipSignals.BUY, self.SIGNAL_TTL
+        else:
+            ms, ttl = previous or (FlipSignals.HOLD, None)
+        return ms, ttl
+
+    def apply_stc_signals(self, row, previous):
+        if row["stc"] < 25:
+            ms, ttl = FlipSignals.SELL, self.SIGNAL_TTL
+        elif row["stc"] > 75:
+            ms, ttl = FlipSignals.BUY, self.SIGNAL_TTL
+        else:
+            ms, ttl = previous or (FlipSignals.HOLD, None)
+        return ms, ttl
+
+    def pick_dominant_signal(self, meta_signals):
+        mss = [ms for ms, _ in meta_signals.values()]
+        bears = mss.count(FlipSignals.SELL)
+        bulls = mss.count(FlipSignals.BUY)
+
+        if bears > bulls and bears >= 3:
+            signal = FlipSignals.SELL
+        elif bulls > bears and bulls >= 3:
+            signal = FlipSignals.BUY
+        else:
+            signal = FlipSignals.HOLD
+
+        return signal
+
+    def backtest(self):
+
+        previous_meta = dict()
 
         for i, (_, row) in enumerate(self.data.iterrows()):
-            # process technical indicators
-            if row["mfi"] >= self.MFI_HIGH:
-                meta_signals["mfi"] = (FlipSignals.SELL, TTL)
-            elif row["mfi"] <= self.MFI_LOW:
-                meta_signals["mfi"] = (FlipSignals.BUY, TTL)
-            else:
-                age_meta_signal("mfi")
+            if row.isna()["stc"]:
+                continue
 
-            if row["ulcer_slope"] > -0.01:
-                meta_signals["ulcer"] = (FlipSignals.BUY, TTL)
-            elif row["ulcer_slope"] < +0.01:
-                meta_signals["ulcer"] = (FlipSignals.SELL, TTL)
-            else:
-                age_meta_signal("ulcer")
+            meta_signals = dict(
+                mfi=self.apply_money_flow(row, previous_meta.get("mfi")),
+                bb=self.apply_bollinger_bands(row, previous_meta.get("bb")),
+                psar=self.apply_psar_signals(row, previous_meta.get("psar")),
+                stc=self.apply_stc_signals(row, previous_meta.get("stc")),
+            )
 
-            if (
-                float(row["high"]) >= row["bb_high"] * (1 - tolerance)
-                and row["slope"] < 0
-            ):
-                meta_signals["bb"] = (FlipSignals.SELL, TTL)
-            elif (
-                float(row["low"]) <= row["bb_low"] * (1 + tolerance)
-                and row["slope"] > 0
-            ):
-                meta_signals["bb"] = (FlipSignals.BUY, TTL)
-            else:
-                age_meta_signal("bb")
+            aligned = self.pick_dominant_signal(meta_signals)
+            if self.is_committed and aligned == FlipSignals.SELL:
+                self.sell_out(i, row["close"])
+            elif not self.is_committed and aligned == FlipSignals.BUY:
+                self.buy_in(i, row["close"])
 
-            signal = meta_signals_are_aligned()
-
-            if self.is_committed:
-                if signal == FlipSignals.SELL:
-                    self.sell_out(i, row["close"])
-            else:
-                if signal == FlipSignals.BUY:
-                    self.buy_in(i, row["close"])
+            previous_meta = self.age_meta_signals(meta_signals)
 
     def draw_chart(self):
 
@@ -206,27 +267,33 @@ class PinkyTracker:
             }
         )
 
-        ulcer_colors = ["red" if s > 0 else "green" for s in df["ulcer_slope"]]
-
         df["mfi-high"] = self.MFI_HIGH
         df["mfi-low"] = self.MFI_LOW
 
         extras = [
             mpf.make_addplot(
-                df["bb_high"], color="olive", secondary_y=False, alpha=0.35
+                df["bb_high"], color="seagreen", secondary_y=False, alpha=0.35
             ),
-            mpf.make_addplot(df["bb_ma"], color="blue", secondary_y=False, alpha=0.35),
+            mpf.make_addplot(df["bb_ma"], color="dodgerblue", secondary_y=False, alpha=0.35),
             mpf.make_addplot(
-                df["bb_low"], color="brown", secondary_y=False, alpha=0.35
+                df["bb_low"], color="tomato", secondary_y=False, alpha=0.35
             ),
-            mpf.make_addplot(df["mfi"], color="red", secondary_y=False, panel=1),
+
+            mpf.make_addplot(df["psar_up"], color="dodgerblue", secondary_y=False, panel=0),
+            mpf.make_addplot(df["psar_down"], color="darkorange", secondary_y=False, panel=0),
+
+            mpf.make_addplot(df["mfi"], color="blueviolet", secondary_y=False, panel=1),
             mpf.make_addplot(
-                df["mfi-high"], color="olive", alpha=0.35, secondary_y=False, panel=1
+                df["mfi-high"], color="seagreen", alpha=0.35, secondary_y=False, panel=1
             ),
             mpf.make_addplot(
-                df["mfi-low"], color="brown", alpha=0.35, secondary_y=False, panel=1
+                df["mfi-low"], color="tomato", alpha=0.35, secondary_y=False, panel=1
             ),
-            mpf.make_addplot(df["ulcer"], type="bar", color=ulcer_colors, panel=2),
+
+            mpf.make_addplot(df["stc"], color="royalblue", panel=2),
+            # mpf.make_addplot(df["stc_slope"], color="darkorange", secondary_y=False, panel=2),
+            # mpf.make_addplot(df["adx_plus"], color="dodgerblue", secondary_y=False, panel=2),
+            # mpf.make_addplot(df["adx_minus"], color="darkorange", secondary_y=False, panel=2),
         ]
 
         fig, axes = mpf.plot(
@@ -245,7 +312,7 @@ class PinkyTracker:
         for ax in axes:
             ax.yaxis.tick_left()
             ax.yaxis.label.set_visible(False)
-            ax.margins(0.0)
+            ax.margins(x=0.1, y=0.1, tight=False)
 
         for signal, time, price in self.order_history:
             fig.axes[0].annotate(
