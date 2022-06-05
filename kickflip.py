@@ -9,17 +9,19 @@ from decimal import Decimal, getcontext
 from collections import deque
 
 from trade_clients import make_binance_test_client, make_binance_client
+from binance.spot import Spot
 from binance.error import ClientError
 
 from pinkybrain import PinkyTracker
-from pprint import pprint
+from metaflip import MAX_CANDLESTICKS
 
 
-def smart_read(client, symbol):
+def smart_read(client: Spot, symbol: str):
     data = list()
-    now = datetime.now()
-    since = int((now - timedelta(minutes=1000)).timestamp()) * 1000
-    enough = int((now - timedelta(minutes=1)).timestamp()) * 1000
+    this_hour = datetime.now().replace(minute=0, second=0, microsecond=0)
+    start_at = this_hour - timedelta(hours=MAX_CANDLESTICKS)
+    since = int(start_at.timestamp()) * 1000
+    enough = int(this_hour.replace().timestamp()) * 1000
 
     cache_file = f"./{symbol}/klines.dat"
     if os.path.isfile(cache_file):
@@ -28,53 +30,72 @@ def smart_read(client, symbol):
         print(f"Read {len(data)} records from {cache_file}")
 
     if data and data[-1][6] > since:
-        # we only want the last 1000 minutes
         since = data[-1][6]
 
     if since < enough:
-        missing_chunk = client.klines(symbol, "1m", startTime=since, limit=1000)
+        missing_chunk = client.klines(
+            symbol, "1h", startTime=since, limit=MAX_CANDLESTICKS
+        )
         data += missing_chunk
         print(f"Read {len(missing_chunk)} records from client.")
 
         with open(cache_file, "wb") as data_file:
-            useful_data = data[-1000:]
+            useful_data = data[-MAX_CANDLESTICKS:]
             pickle.dump(useful_data, data_file, protocol=pickle.HIGHEST_PROTOCOL)
-            print(f".: Cached {len(useful_data)} to {cache_file}")
+            print(f"Cached {len(useful_data)} to {cache_file}")
 
-    return data[-1000:]
+    return data[-MAX_CANDLESTICKS:]
 
 
-def run(client, symbol, budget):
+def run(client: Spot, symbol: str, budget: Decimal):
 
     try:
         account_data = client.account()
         exchage_data = client.exchange_info(symbol)
+
+        balances = account_data.pop("balances")
+        assets = list(filter(lambda x: float(x["free"]) > 0, balances))
+        own_symbols = {x["asset"] + "EUR" for x in assets}
+        price_data = client.ticker_price()
+        own_tickers = filter(lambda x: x["symbol"] in own_symbols, price_data)
+        price_eur = {
+            tick["symbol"][:-3]: Decimal(tick["price"]) for tick in own_tickers
+        }
+
+        symbol_data = exchage_data["symbols"][0]
+        getcontext().prec = max(
+            symbol_data["quoteAssetPrecision"], symbol_data["baseAssetPrecision"]
+        )
+
     except ClientError as error:
-        print("x: Cannot get exchage info:", error.error_message)
+        print("Client error:", error.error_message)
         return -1
-
-    balances = account_data.pop("balances")
-    print("   Available assets:")
-    for balance in filter(lambda x: float(x["free"]) > 0, balances):
-        print("\t", balance["free"], balance["asset"])
-
-    symbol_data = exchage_data["symbols"][0]
-    getcontext().prec = max(
-        symbol_data["quoteAssetPrecision"], symbol_data["baseAssetPrecision"]
-    )
 
     assert account_data["makerCommission"] == account_data["takerCommission"]
     commission = Decimal(account_data["makerCommission"] or 10) / 10000
-    pair = (symbol_data["baseAsset"], symbol_data["quoteAsset"])
+    print(f"Commission: {commission * 100:.1f} %")
+    print("Crypto wallet:")
+    wallet_value = 0
+    for balance in filter(lambda x: float(x["free"]) > 0, balances):
+        amount = Decimal(balance["free"]) + Decimal(balance["locked"])
+        name = balance["asset"]
+        value = amount * price_eur[name]
+        print(f"{amount:18} {name}  =>  {value:7.2f} EUR")
+        wallet_value += value
+    print(f"               (value) {wallet_value:12.2f} EUR")
+
 
     os.makedirs(f"./{symbol}", exist_ok=True)
-
     try:
         data = smart_read(client, symbol)
     except ClientError as error:
         print("x: Cannot read klines:", error.error_message)
         return -1
 
+    from pprint import pprint
+    pprint(data[-10:])
+
+    pair = (symbol_data["baseAsset"], symbol_data["quoteAsset"])
     flippy = PinkyTracker(pair, budget, commission, wix=5)
     flippy.feed(data)
     flippy.backtest()
@@ -96,10 +117,10 @@ if __name__ == "__main__":
     actual = args.parse_args()
 
     if actual.go_live:
-        print(".: Using live connector.")
+        print("- using live connector")
         client = make_binance_client()
     else:
-        print(".: Using test connector.")
+        print("- using test connector")
         client = make_binance_test_client()
 
     ret_code = run(client, actual.pair, actual.budget)

@@ -3,9 +3,9 @@ import pandas as pd
 import mplfinance as mpf
 from matplotlib import pyplot as plt
 from ta.volatility import BollingerBands, ulcer_index
-from ta.momentum import awesome_oscillator
+from ta.trend import AroonIndicator
 from ta.volume import money_flow_index
-from metaflip import CandleStick, FlipSignals
+from metaflip import CandleStick, FlipSignals, MAX_CANDLESTICKS
 
 
 class PinkyTracker:
@@ -21,8 +21,8 @@ class PinkyTracker:
         89,
         144,
     ]
-    MFI_HIGH = 65
-    MFI_LOW = 35
+    MFI_HIGH = 70
+    MFI_LOW = 30
 
     def __init__(self, trading_pair, budget, commission, wix):
         self.base_symbol, self.quote_symbol = trading_pair
@@ -32,7 +32,7 @@ class PinkyTracker:
         self.is_committed = False
 
         # some parameters
-        self.stop_loss_factor = commission * 8
+        self.stop_loss_factor = 0.05
         self.wix = wix
 
         # running data
@@ -60,18 +60,18 @@ class PinkyTracker:
 
     def feed(self, kline_data):
         if not kline_data:
-            print(".: Provided feed seems empty, skipped.")
+            print("Provided feed seems empty, skipped.")
             return
 
-        if len(kline_data) > 1000:
-            print(".: Provided feed was truncated to last 1000.")
-            kline_data = kline_data[-1000:]
+        if len(kline_data) > MAX_CANDLESTICKS:
+            kline_data = kline_data[-MAX_CANDLESTICKS:]
+            print(f"Provided feed was truncated to last {len(kline_data)}.")
 
         klines = [CandleStick(x) for x in kline_data]
         new_df = pd.DataFrame(klines)
         new_df.index = pd.DatetimeIndex(new_df["close_time"])
 
-        self.data = pd.concat([self.data.tail(1000 - new_df.size), new_df])
+        self.data = pd.concat([self.data.tail(MAX_CANDLESTICKS - new_df.size), new_df])
 
         # add indicators to dataframe
         self.data["slope"] = self.data["close"].diff()
@@ -112,17 +112,16 @@ class PinkyTracker:
         self.spent = spent
         self.is_committed = True
         self.commit_price = Decimal(price)
-        self.stop_loss = price * (1 - self.stop_loss_factor)
 
         print(
             f"Bought {bought} {self.base_symbol} at {price} {self.quote_symbol}, spent {spent} {self.quote_symbol}]"
         )
 
-    def sell_out(self, itime, price, stop_loss=False):
+    def sell_out(self, itime, price):
         sold = self.base
         amount = (1 - self.commission) * sold * price
         profit = amount - self.spent
-        if profit < 0 and not stop_loss:
+        if profit < 0:
             print("Not selling without profit", profit, self.quote_symbol)
             return
 
@@ -132,7 +131,6 @@ class PinkyTracker:
 
         self.is_committed = False
         self.commit_price = None
-        self.stop_loss = None
 
         print(
             f" Sold  {sold} {self.base_symbol} at {price} {self.quote_symbol} for {profit} {self.quote_symbol} profit [Wallet: {self.quote} {self.quote_symbol}]"
@@ -163,7 +161,7 @@ class PinkyTracker:
             # process technical indicators
             if row["mfi"] >= self.MFI_HIGH:
                 meta_signals["mfi"] = (FlipSignals.SELL, TTL)
-            elif row["mfi"] <=  self.MFI_LOW:
+            elif row["mfi"] <= self.MFI_LOW:
                 meta_signals["mfi"] = (FlipSignals.BUY, TTL)
             else:
                 age_meta_signal("mfi")
@@ -175,9 +173,15 @@ class PinkyTracker:
             else:
                 age_meta_signal("ulcer")
 
-            if float(row["high"]) >= row["bb_high"] * (1-tolerance) and row["slope"] < 0:
+            if (
+                float(row["high"]) >= row["bb_high"] * (1 - tolerance)
+                and row["slope"] < 0
+            ):
                 meta_signals["bb"] = (FlipSignals.SELL, TTL)
-            elif float(row["low"]) <= row["bb_low"] * (1+tolerance) and row["slope"] > 0:
+            elif (
+                float(row["low"]) <= row["bb_low"] * (1 + tolerance)
+                and row["slope"] > 0
+            ):
                 meta_signals["bb"] = (FlipSignals.BUY, TTL)
             else:
                 age_meta_signal("bb")
@@ -185,10 +189,7 @@ class PinkyTracker:
             signal = meta_signals_are_aligned()
 
             if self.is_committed:
-                if row["close"] <= self.stop_loss:
-                    print("WARNING: Stop loss activated.")
-                    self.sell_out(i, row["close"], stop_loss=True)
-                elif signal == FlipSignals.SELL:
+                if signal == FlipSignals.SELL:
                     self.sell_out(i, row["close"])
             else:
                 if signal == FlipSignals.BUY:
@@ -211,10 +212,13 @@ class PinkyTracker:
         df["mfi-low"] = self.MFI_LOW
 
         extras = [
-            mpf.make_addplot(df["bb_high"], color="olive", secondary_y=False, alpha=0.35),
+            mpf.make_addplot(
+                df["bb_high"], color="olive", secondary_y=False, alpha=0.35
+            ),
             mpf.make_addplot(df["bb_ma"], color="blue", secondary_y=False, alpha=0.35),
-            mpf.make_addplot(df["bb_low"], color="brown", secondary_y=False, alpha=0.35),
-
+            mpf.make_addplot(
+                df["bb_low"], color="brown", secondary_y=False, alpha=0.35
+            ),
             mpf.make_addplot(df["mfi"], color="red", secondary_y=False, panel=1),
             mpf.make_addplot(
                 df["mfi-high"], color="olive", alpha=0.35, secondary_y=False, panel=1
@@ -222,7 +226,6 @@ class PinkyTracker:
             mpf.make_addplot(
                 df["mfi-low"], color="brown", alpha=0.35, secondary_y=False, panel=1
             ),
-
             mpf.make_addplot(df["ulcer"], type="bar", color=ulcer_colors, panel=2),
         ]
 
@@ -235,7 +238,7 @@ class PinkyTracker:
             figsize=(13, 8),
             tight_layout=True,
             style="yahoo",
-            warn_too_much_data=1000,
+            warn_too_much_data=MAX_CANDLESTICKS,
             returnfig=True,
         )
 

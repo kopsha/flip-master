@@ -2,13 +2,13 @@
 from collections import namedtuple
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum
+from enum import IntEnum
 from decimal import Decimal
 from statistics import mean
-from math import copysign
 
 
-# Binance API response kline format
+MAX_CANDLESTICKS = 672
+
 KLinePoint = namedtuple(
     "KLinePoint",
     [
@@ -50,13 +50,7 @@ class CandleStick:
         self.volume = float(kpoint.volume)
 
 
-class FlipSignals(Enum):
+class FlipSignals(IntEnum):
     HOLD = 0
     BUY = 1
     SELL = 2
-
-    AS_STR = {
-        0: "hold",
-        1: "buy",
-        2: "sell",
-    }
