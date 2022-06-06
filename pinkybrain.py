@@ -21,7 +21,7 @@ class PinkyTracker:
         89,
         144,
     ]
-    SIGNAL_TTL = 3
+    SIGNAL_TTL = 5
     MFI_HIGH = 65
     MFI_LOW = 35
 
@@ -42,9 +42,8 @@ class PinkyTracker:
         self.commit_price = None
         self.stop_loss = None
 
-    def __repr__(self) -> str:
-        last_price = self.data["close"].iloc[-1]
-        est_value = (1 - self.commission) * self.base * last_price + self.quote
+    def wallet(self, price) -> str:
+        est_value = (1 - self.commission) * self.base * price + self.quote
         return f"{self.base:.8f} {self.base_symbol} + {self.quote} {self.quote_symbol} => {est_value} {self.quote_symbol}"
 
     @property
@@ -133,8 +132,8 @@ class PinkyTracker:
 
 
     def buy_in(self, itime, price):
-        spent = self.quote
-        bought = (1 - self.commission) * self.quote / price
+        spent = min(self.quote, 250)
+        bought = (1 - self.commission) * spent / price
 
         self.quote -= spent
         self.base += bought
@@ -145,16 +144,19 @@ class PinkyTracker:
         self.commit_price = Decimal(price)
 
         print(
-            f"Bought {bought} {self.base_symbol} at {price} {self.quote_symbol}, spent {spent} {self.quote_symbol}]"
+            f"Bought {bought} {self.base_symbol} at {price} {self.quote_symbol}, spent {spent} {self.quote_symbol}",
+            f"\n\tWallet: {self.wallet(price)}",
         )
 
     def sell_out(self, itime, price):
         sold = self.base
         amount = (1 - self.commission) * sold * price
         profit = amount - self.spent
-        # if profit < 0:
-        #     print("Not selling without profit", profit, self.quote_symbol)
-        #     return
+
+        if profit < 0:
+            # print("Not selling without profit", profit, self.quote_symbol)
+            # print(self)
+            return
 
         self.base -= sold
         self.quote += amount
@@ -164,7 +166,8 @@ class PinkyTracker:
         self.commit_price = None
 
         print(
-            f" Sold  {sold} {self.base_symbol} at {price} {self.quote_symbol} for {profit} {self.quote_symbol} profit [Wallet: {self.quote} {self.quote_symbol}]"
+            f" Sold  {sold} {self.base_symbol} at {price} {self.quote_symbol} for {profit} {self.quote_symbol} profit",
+            f"\n\tWallet: {self.wallet(price)}",
         )
 
     def age_meta_signals(self, meta_signals):
@@ -224,9 +227,9 @@ class PinkyTracker:
         bears = mss.count(FlipSignals.SELL)
         bulls = mss.count(FlipSignals.BUY)
 
-        if bears > bulls and bears >= 3:
+        if bears > bulls and bears > 2:
             signal = FlipSignals.SELL
-        elif bulls > bears and bulls >= 3:
+        elif bulls > bears and bulls > 2:
             signal = FlipSignals.BUY
         else:
             signal = FlipSignals.HOLD

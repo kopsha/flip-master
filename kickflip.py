@@ -79,7 +79,7 @@ def run(client: Spot, symbol: str, budget: Decimal):
     for balance in filter(lambda x: float(x["free"]) > 0, balances):
         amount = Decimal(balance["free"]) + Decimal(balance["locked"])
         name = balance["asset"]
-        value = amount * price_eur[name]
+        value = amount * price_eur.get(name, 0)
         print(f"{amount:18} {name}  =>  {value:7.2f} EUR")
         wallet_value += value
     print(f"               (value) {wallet_value:12.2f} EUR")
