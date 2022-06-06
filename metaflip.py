@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 from collections import namedtuple
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import IntEnum
 from decimal import Decimal
 from statistics import mean
 
 
-MAX_CANDLESTICKS = 672
+FULL_CYCLE = 672
+WEEKLY_CYCLE = 168
+DAILY_CYCLE = 24
 
 KLinePoint = namedtuple(
     "KLinePoint",
@@ -31,6 +33,7 @@ KLinePoint = namedtuple(
 @dataclass
 class CandleStick:
 
+    open_time: datetime
     open: Decimal
     high: Decimal
     low: Decimal
@@ -41,11 +44,20 @@ class CandleStick:
 
     def __init__(self, kline_data):
         kpoint = KLinePoint(*kline_data)
+        self.open_time = (
+            datetime.utcfromtimestamp(int(kpoint.open_time) // 1000)
+            # .replace(tzinfo=timezone.utc)
+            # .astimezone()
+        )
         self.open = Decimal(kpoint.open)
         self.high = Decimal(kpoint.high)
         self.low = Decimal(kpoint.low)
         self.close = Decimal(kpoint.close)
-        self.close_time = datetime.fromtimestamp(int(kpoint.close_time) // 1000)
+        self.close_time = (
+            datetime.utcfromtimestamp(int(kpoint.close_time) // 1000)
+            # .replace(tzinfo=timezone.utc)
+            # .astimezone()
+        )
         self.typical_price = float(mean([self.open, self.high, self.low, self.close]))
         self.volume = float(kpoint.volume)
 
