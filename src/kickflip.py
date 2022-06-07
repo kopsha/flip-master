@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import schedule
 import time
 import os
 import pickle
@@ -93,13 +92,9 @@ def run(client: Spot, symbol: str, budget: Decimal):
     pair = (symbol_data["baseAsset"], symbol_data["quoteAsset"])
     flippy = PinkyTracker(pair, budget, commission, wix=5)
     flippy.feed(data)
-    # flippy.backtest()
-    flippy.draw_weekly_plus()
+    flippy.backtest()
 
-    # schedule.every().minute.at(":13").do(lambda: tick(client, symbol, data, flippy))
-    # while True:
-    #     schedule.run_pending()
-    #     time.sleep(0.618033988749894)
+    # flippy.draw_weekly_plus()
 
 
 if __name__ == "__main__":
@@ -119,6 +114,4 @@ if __name__ == "__main__":
         client = make_binance_test_client()
 
     ret_code = run(client, actual.pair, actual.budget)
-
-    time.sleep(0.5)
     exit(ret_code)

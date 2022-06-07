@@ -25,12 +25,12 @@ RUN chown -R ${UNAME}:${UNAME} /app
 USER ${UNAME}
 
 # prepare container for production
-# COPY entrypoint /app/
+COPY entrypoint /app/
 ENTRYPOINT ["/app/entrypoint"]
-COPY ./src/ /app/src/
+# COPY ./src/ /app/src/
 
 # override for local environment
 VOLUME ["/app/src"]
 
 EXPOSE $PORT
-CMD ["pytho", ""]
+CMD ["kickflip.py", "--budget", "250", "--go-live", "--pair", "ETHEUR"]

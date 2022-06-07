@@ -11,7 +11,7 @@ def make_binance_client():
     if os.path.isfile(CREDENTIALS_CACHE):
         credentials.read(CREDENTIALS_CACHE)
     else:
-        empty = dict(api_key="", secret="")
+        empty = dict(key="", secret="")
         with open(CREDENTIALS_CACHE, "wt") as storage:
             credentials["binance"] = empty
             credentials.write(storage)
