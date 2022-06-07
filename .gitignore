@@ -3,3 +3,5 @@ credentials.ini
 *.dat
 *.png
 __pycache__/
+.env
+.virtualenv/
