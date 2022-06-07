@@ -14,6 +14,8 @@ from metaflip import FULL_CYCLE
 
 
 def smart_read(client: Spot, symbol: str):
+    """Read most from cache and only missing klines from server"""
+
     data = list()
     this_hour = datetime.now().replace(minute=0, second=0, microsecond=0)
     start_at = this_hour - timedelta(hours=FULL_CYCLE)
@@ -35,6 +37,7 @@ def smart_read(client: Spot, symbol: str):
         print(f"Read {len(missing_chunk)} records from client.")
 
         with open(cache_file, "wb") as data_file:
+            # remove last candle from data as it may be incomplete
             useful_data = data[-FULL_CYCLE:-1]
             pickle.dump(useful_data, data_file, protocol=pickle.HIGHEST_PROTOCOL)
             print(f"Cached {len(useful_data)} to {cache_file}")
@@ -42,8 +45,14 @@ def smart_read(client: Spot, symbol: str):
     return data[-FULL_CYCLE:]
 
 
-def run(client: Spot, symbol: str, budget: Decimal):
+def set_decimal_precison_context(symbol_data):
+    getcontext().prec = max(
+        symbol_data["quoteAssetPrecision"], symbol_data["baseAssetPrecision"]
+    )
 
+
+def run(client: Spot, symbol: str, budget: Decimal):
+    """initialize client, enviroment and the bot"""
     try:
         account_data = client.account()
         exchage_data = client.exchange_info(symbol)
@@ -59,18 +68,17 @@ def run(client: Spot, symbol: str, budget: Decimal):
             tick["symbol"][:-3]: Decimal(tick["price"]) for tick in own_tickers
         }
 
-        symbol_data = exchage_data["symbols"][0]
-        getcontext().prec = max(
-            symbol_data["quoteAssetPrecision"], symbol_data["baseAssetPrecision"]
-        )
-
     except ClientError as error:
         print("Client error:", error.error_message)
         return -1
 
+    symbol_data = exchage_data["symbols"][0]
+    set_decimal_precison_context(symbol_data)
+
     assert account_data["makerCommission"] == account_data["takerCommission"]
     commission = Decimal(account_data["makerCommission"] or 10) / 10000
     print(f"Commission: {commission * 100:.1f} %")
+
     print("Crypto wallet:")
     wallet_value = 0
     for balance in filter(lambda x: float(x["free"]) > 0, balances):
@@ -81,8 +89,11 @@ def run(client: Spot, symbol: str, budget: Decimal):
         wallet_value += value
     print(f"               (value) {wallet_value:12.2f} EUR")
 
+    # prepare cache folder
     os.makedirs(f"./{symbol}", exist_ok=True)
+
     try:
+        # read initial data
         data = smart_read(client, symbol)
     except ClientError as error:
         print("x: Cannot read klines:", error.error_message)
@@ -91,10 +102,12 @@ def run(client: Spot, symbol: str, budget: Decimal):
     pair = (symbol_data["baseAsset"], symbol_data["quoteAsset"])
     flippy = PinkyTracker(pair, budget, commission, wix=5)
     flippy.feed(data)
+ 
+    print("--- action ---")
+
     flippy.backtest()
 
-    # flippy.draw_weekly_plus()
-
+    # TODO: start a monitoring loop that catches opportunities
 
 if __name__ == "__main__":
 
@@ -112,5 +125,5 @@ if __name__ == "__main__":
         print("- using test connector")
         client = make_binance_test_client()
 
-    ret_code = run(client, actual.pair, actual.budget)
-    exit(ret_code)
+    run(client, actual.pair, actual.budget)
+    print("--- the end ---")

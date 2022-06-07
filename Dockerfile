@@ -24,9 +24,13 @@ RUN useradd -r -u ${UID} -g ${GID} -o -s /bin/bash ${UNAME}
 RUN chown -R ${UNAME}:${UNAME} /app
 USER ${UNAME}
 
-# prepare container for production
+# for mac only
+ENV ENTR_INOTIFY_WORKAROUND=1
+
 COPY entrypoint /app/
 ENTRYPOINT ["/app/entrypoint"]
+
+# prepare container for production
 # COPY ./src/ /app/src/
 
 # override for local environment
