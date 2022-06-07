@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+
+set -e
+
+main()
+{
+    case $1 in
+        shell)
+            bash
+            ;;
+        develop)
+            printf "\t ..: Starting the developer loop\n"
+            find ./ -name "*.py" | entr -r python app.py
+            ;;
+        cron-task)
+            printf "\t ..: Running scheduled tasks\n"
+            python app.py --cron-task
+            ;;
+        cache-migrate)
+            printf "\t ..: Running scheduled tasks\n"
+            python app.py --cache-migrate
+            ;;
+        make-migrations)
+            printf "\t ..: Generating data migrations\n"
+            shift
+            revision_name="$*"
+            [[ -z "$revision_name" ]] && { printf "ERROR: revision_name cannot be empty."; exit -1; }
+            alembic revision --autogenerate -m "$revision_name"
+            ;;
+        migrate)
+            printf "\t ..: Applying migrations\n"
+            alembic upgrade head
+            ;;
+        *)
+            printf "\t ..: Invoking '$*'\n"
+            UVICORN_PORT=$PORT exec "$@"
+            ;;
+    esac
+}
+
+cd /app/src
+main "$@"
