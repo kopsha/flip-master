@@ -102,12 +102,11 @@ def run(client: Spot, symbol: str, budget: Decimal):
     pair = (symbol_data["baseAsset"], symbol_data["quoteAsset"])
     flippy = PinkyTracker(pair, budget, commission, wix=5)
     flippy.feed(data)
- 
-    print("--- action ---")
 
-    flippy.backtest()
+    print("--- action! ---")
 
     # TODO: start a monitoring loop that catches opportunities
+
 
 if __name__ == "__main__":
 

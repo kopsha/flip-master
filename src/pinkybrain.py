@@ -9,7 +9,14 @@ from ta.volatility import BollingerBands
 from ta.trend import ADXIndicator, PSARIndicator, stc
 from ta.volume import money_flow_index
 
-from metaflip import CandleStick, FlipSignals, FULL_CYCLE, WEEKLY_CYCLE, DAILY_CYCLE
+from metaflip import (
+    KLinePoint,
+    CandleStick,
+    FlipSignals,
+    FULL_CYCLE,
+    WEEKLY_CYCLE,
+    DAILY_CYCLE,
+)
 
 
 class PinkyTracker:
@@ -89,6 +96,10 @@ class PinkyTracker:
             kline_data = kline_data[-FULL_CYCLE:]
             print(f"Provided feed was truncated to last {len(kline_data)}.")
 
+        for dx in kline_data[-4:]:
+            kx = KLinePoint(*dx)
+            print(kx)
+
         klines = [CandleStick(x) for x in kline_data]
         new_df = pd.DataFrame(klines)
         new_df.index = pd.DatetimeIndex(new_df["open_time"])
@@ -106,45 +117,6 @@ class PinkyTracker:
                 "close": "float",
             }
         )
-
-        self.data["mfi"] = money_flow_index(
-            high=df["high"],
-            low=df["low"],
-            close=df["close"],
-            volume=df["volume"],
-            window=self.fast_window,
-        )
-
-        bb = BollingerBands(close=df["close"], window=self.window)
-        self.data["bb_ma"] = bb.bollinger_mavg()
-        self.data["bb_high"] = bb.bollinger_hband()
-        self.data["bb_low"] = bb.bollinger_lband()
-
-        adx = ADXIndicator(
-            high=df["high"],
-            low=df["low"],
-            close=df["close"],
-            window=self.faster_window,
-        )
-        self.data["adx"] = adx.adx()
-        self.data["adx_plus"] = adx.adx_pos()
-        self.data["adx_minus"] = adx.adx_neg()
-
-        psar = PSARIndicator(
-            high=df["high"], low=df["low"], close=df["close"], step=0.01
-        )
-        self.data["psar_up"] = psar.psar_up()
-        self.data["psar_down"] = psar.psar_down()
-        self.data["psar_up_sig"] = psar.psar_up_indicator()
-        self.data["psar_down_sig"] = psar.psar_down_indicator()
-
-        self.data["stc"] = stc(
-            self.data["close"],
-            window_slow=self.slower_window,
-            window_fast=self.window,
-            cycle=self.window,
-        )
-        self.data["stc_slope"] = self.data["stc"].diff()
 
     def buy_in(self, itime, price):
         spent = min(self.quote, 250)
@@ -169,8 +141,8 @@ class PinkyTracker:
         profit = amount - self.spent
 
         if profit < 0:
-            # print("Not selling without profit", profit, self.quote_symbol)
-            # print(self)
+            print("Not selling without profit", profit, self.quote_symbol)
+            print(self)
             return
 
         self.base -= sold
@@ -256,14 +228,14 @@ class PinkyTracker:
         previous_meta = dict()
 
         for i, (_, row) in enumerate(self.data.iterrows()):
-            if row.isna()["stc"]:
+            if i <= self.slower_window:
                 continue
 
             meta_signals = dict(
-                mfi=self.apply_money_flow(row, previous_meta.get("mfi")),
-                bb=self.apply_bollinger_bands(row, previous_meta.get("bb")),
-                psar=self.apply_psar_signals(row, previous_meta.get("psar")),
-                stc=self.apply_stc_signals(row, previous_meta.get("stc")),
+                # mfi=self.apply_money_flow(row, previous_meta.get("mfi")),
+                # bb=self.apply_bollinger_bands(row, previous_meta.get("bb")),
+                # psar=self.apply_psar_signals(row, previous_meta.get("psar")),
+                # stc=self.apply_stc_signals(row, previous_meta.get("stc")),
             )
 
             aligned = self.pick_dominant_signal(meta_signals)
@@ -282,35 +254,13 @@ class PinkyTracker:
                 "high": "float",
                 "low": "float",
                 "close": "float",
+                "volume": "float",
+                "buy_volume": "float",
+                "sell_volume": "float",
             }
         )
 
-        df["mfi-high"] = self.MFI_HIGH
-        df["mfi-low"] = self.MFI_LOW
-
         extras = [
-            mpf.make_addplot(
-                df["bb_high"], color="seagreen", secondary_y=False, alpha=0.35
-            ),
-            mpf.make_addplot(
-                df["bb_ma"], color="dodgerblue", secondary_y=False, alpha=0.35
-            ),
-            mpf.make_addplot(
-                df["bb_low"], color="tomato", secondary_y=False, alpha=0.35
-            ),
-            mpf.make_addplot(
-                df["psar_up"], color="dodgerblue", secondary_y=False, panel=0
-            ),
-            mpf.make_addplot(
-                df["psar_down"], color="darkorange", secondary_y=False, panel=0
-            ),
-            mpf.make_addplot(df["mfi"], color="blueviolet", secondary_y=False, panel=1),
-            mpf.make_addplot(
-                df["mfi-high"], color="seagreen", alpha=0.35, secondary_y=False, panel=1
-            ),
-            mpf.make_addplot(
-                df["mfi-low"], color="tomato", alpha=0.35, secondary_y=False, panel=1
-            ),
             mpf.make_addplot(df["stc"], color="royalblue", panel=2),
             # mpf.make_addplot(df["stc_slope"], color="darkorange", secondary_y=False, panel=2),
             # mpf.make_addplot(df["adx_plus"], color="dodgerblue", secondary_y=False, panel=2),
@@ -322,7 +272,7 @@ class PinkyTracker:
             type="candle",
             addplot=extras,
             title=f"{self.base_symbol}/{self.quote_symbol}",
-            # volume=True,
+            volume=True,
             figsize=(13, 8),
             tight_layout=True,
             style="yahoo",
@@ -335,147 +285,7 @@ class PinkyTracker:
             ax.yaxis.label.set_visible(False)
             ax.margins(x=0.1, y=0.1, tight=False)
 
-        for signal, time, price in self.order_history:
-            fig.axes[0].annotate(
-                signal.name,
-                xy=(time, price),
-                fontsize="small",
-                xytext=((-0, +55.0) if signal == FlipSignals.SELL else (-0, -55.0)),
-                textcoords="offset pixels",
-                color="green" if signal == FlipSignals.SELL else "red",
-                horizontalalignment="center",
-                verticalalignment="center",
-                arrowprops=dict(arrowstyle="->"),
-            )
-
         fig.subplots_adjust(left=0, bottom=0, right=1, top=1, wspace=0, hspace=0)
-        # plt.savefig('image.png', bbox_inches='tight', pad_inches = 0.3)
-        plt.show()
 
-    def draw_weekly_chart(self):
-        """Divide the graph in 4 equal periods"""
-        assert (
-            self.data["close"].size == FULL_CYCLE
-        ), f"Available data size ({self.data.size}) does not match the weekly cycles."
-
-        df = self.data.astype(
-            {
-                "open": "float",
-                "high": "float",
-                "low": "float",
-                "close": "float",
-            }
-        )
-        cycles_split = [
-            mpf.make_addplot(
-                df[i : i + WEEKLY_CYCLE], type="candle", panel=3 - i // WEEKLY_CYCLE
-            )
-            for i in range(FULL_CYCLE - 2 * WEEKLY_CYCLE, -1, -WEEKLY_CYCLE)
-        ]
-
-        # for i in range(FULL_CYCLE - 2 * WEEKLY_CYCLE, -1, - WEEKLY_CYCLE):
-        #     print(i, i + WEEKLY_CYCLE, i % WEEKLY_CYCLE, 3 - i // WEEKLY_CYCLE)
-
-        fig, axes = mpf.plot(
-            df[FULL_CYCLE - WEEKLY_CYCLE :],
-            type="candle",
-            addplot=cycles_split,
-            title=f"{self.base_symbol}/{self.quote_symbol}",
-            figsize=(13, 8),
-            tight_layout=True,
-            style="yahoo",
-            panel_ratios=(1, 1, 1, 1),
-            warn_too_much_data=FULL_CYCLE,
-            returnfig=True,
-        )
-
-        for ax in axes:
-            ax.yaxis.tick_left()
-            ax.yaxis.label.set_visible(False)
-            ax.set_xticks(range(0, WEEKLY_CYCLE, DAILY_CYCLE))
-            ax.margins(x=0.1, y=0.1, tight=False)
-
-        fig.subplots_adjust(left=0, bottom=0, right=1, top=1, wspace=0, hspace=0)
-        # plt.savefig('image.png', bbox_inches='tight', pad_inches = 0.3)
-        plt.show()
-
-    def draw_weekly_plus(self):
-        """Draw past 4 weeks plus current week"""
-        assert (
-            self.data["close"].size == FULL_CYCLE
-        ), f"Available data size ({self.data.size}) does not match the weekly cycles."
-
-        now = datetime.utcnow()
-        sow = now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(
-            days=now.weekday()
-        )
-        eow = sow + timedelta(weeks=1)
-        soc = sow - timedelta(weeks=4)
-
-        df = self.data.astype(
-            {
-                "open": "float",
-                "high": "float",
-                "low": "float",
-                "close": "float",
-            }
-        )
-        first_candle = df["open_time"].iloc[0]
-
-        # fill in from start of the week
-        before = pd.DataFrame(data=None, columns=df.columns)
-        before.index = pd.DatetimeIndex(before["open_time"])
-
-        ti = soc
-        while ti < first_candle:
-            before.loc[ti] = pd.Series(dtype=float)
-            ti += timedelta(hours=1)
-
-        # fill in to the end of the week
-        after = pd.DataFrame(data=None, columns=df.columns)
-        after.index = pd.DatetimeIndex(after["open_time"])
-
-        ti = df["open_time"][-1] + timedelta(hours=1)
-        while ti < eow:
-            after.loc[ti] = pd.Series(dtype=float)
-            ti += timedelta(hours=1)
-
-        full_df = pd.concat([before, df, after])
-
-        cycles_split = [
-            mpf.make_addplot(
-                full_df[i : i + WEEKLY_CYCLE], type="candle", panel=4 - i // WEEKLY_CYCLE
-            )
-            for i in range(FULL_CYCLE - WEEKLY_CYCLE, -1, -WEEKLY_CYCLE)
-        ]
-
-        fig, axes = mpf.plot(
-            full_df[FULL_CYCLE:],
-            type="candle",
-            addplot=cycles_split,
-            title=f"{self.base_symbol}/{self.quote_symbol}",
-            figsize=(13, 8),
-            tight_layout=True,
-            style="yahoo",
-            panel_ratios=(1, 1, 1, 1, 1),
-            warn_too_much_data=FULL_CYCLE,
-            returnfig=True,
-        )
-
-        week_days = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
-        for ax in axes:
-            ax.yaxis.tick_left()
-            ax.yaxis.label.set_visible(False)
-            ax.set_xticks(
-                range(0, WEEKLY_CYCLE, DAILY_CYCLE),
-                rotation=0,
-            )
-            ax.set_xticklabels(
-                week_days, rotation=0, fontdict={"horizontalalignment": "left"},
-            )
-            ax.set_ylim([df["close"].min(), df["close"].max()])
-            # ax.margins(x=0.1, y=0.1, tight=False)
-
-        fig.subplots_adjust(left=0, bottom=0, right=1, top=1, wspace=0, hspace=0)
-        # plt.savefig('image.png', bbox_inches='tight', pad_inches = 0.3)
-        plt.show()
+        plt.savefig("show.png", bbox_inches="tight", pad_inches=0.3)
+        print("saved show.png")
