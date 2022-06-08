@@ -7,9 +7,9 @@ from decimal import Decimal
 from statistics import mean
 
 
-FULL_CYCLE = 672
-WEEKLY_CYCLE = 168
 DAILY_CYCLE = 24
+WEEKLY_CYCLE = DAILY_CYCLE * 7
+FULL_CYCLE = WEEKLY_CYCLE * 4
 
 """
 Some background info:
@@ -20,7 +20,7 @@ taker_buy_base_asset_volume = maker_sell_base_asset_volume
 taker_sell_base_asset_volume = maker_buy_base_asset_volume
 and
 total_volume = taker_buy_base_asset_volume + taker_sell_base_asset_volume
-                = maker_buy_base_asset_volume + maker_sell_base_asset_volume    
+             = maker_buy_base_asset_volume + maker_sell_base_asset_volume
 """
 KLinePoint = namedtuple(
     "KLinePoint",
@@ -52,8 +52,8 @@ class CandleStick:
 
     trades_count: int
     volume: Decimal
-    buy_volume: Decimal
-    sell_volume: Decimal
+    maker_volume: Decimal
+    taker_volume: Decimal
 
     def __init__(self, kline_data):
         kline = KLinePoint(*kline_data)
@@ -64,11 +64,11 @@ class CandleStick:
         self.close = Decimal(kline.close)
         self.close_time = datetime.utcfromtimestamp(int(kline.close_time) // 1000)
 
-        self.trades_count = kline.trades_count
-        self.volume = Decimal(kline.quote_asset_volume)
-        self.sell_volume = Decimal(kline.taker_buy_quote_asset_volume)
-        self.buy_volume = self.volume - Decimal(kline.taker_buy_quote_asset_volume)
-        self.volume_per_trade = self.volume / self.trades_count
+        # express volumes in base asset
+        self.volume = Decimal(kline.volume)
+        self.taker_volume = Decimal(kline.taker_buy_base_asset_volume)
+        self.maker_volume = self.volume - self.taker_volume
+        self.trades_count = int(kline.trades_count)
 
 
 class FlipSignals(IntEnum):

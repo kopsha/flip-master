@@ -246,7 +246,7 @@ class PinkyTracker:
 
             previous_meta = self.age_meta_signals(meta_signals)
 
-    def draw_chart(self):
+    def draw_chart(self, to_file):
 
         df = self.data.astype(
             {
@@ -255,16 +255,20 @@ class PinkyTracker:
                 "low": "float",
                 "close": "float",
                 "volume": "float",
-                "buy_volume": "float",
-                "sell_volume": "float",
+                "maker_volume": "float",
+                "taker_volume": "float",
             }
         )
 
+        df["stdev"] = df["close"].rolling(self.fast_window).std(ddof=0)
+        df["volume_stdev"] = df["volume"].rolling(self.fast_window).std(ddof=0)
+        df["wtf"] = df["stdev"] * df["volume_stdev"]
+        df["mfi"] = money_flow_index(df["high"], df["low"], df["close"], df["volume"], self.fast_window)
+
         extras = [
-            mpf.make_addplot(df["stc"], color="royalblue", panel=2),
-            # mpf.make_addplot(df["stc_slope"], color="darkorange", secondary_y=False, panel=2),
-            # mpf.make_addplot(df["adx_plus"], color="dodgerblue", secondary_y=False, panel=2),
-            # mpf.make_addplot(df["adx_minus"], color="darkorange", secondary_y=False, panel=2),
+            mpf.make_addplot(df["wtf"], color="red", panel=1),
+            # mpf.make_addplot(df["stdev"], color="darkorange", secondary_y=False, panel=2),
+            mpf.make_addplot(df["mfi"], color="darkorange", panel=2),
         ]
 
         fig, axes = mpf.plot(
@@ -281,11 +285,11 @@ class PinkyTracker:
         )
 
         for ax in axes:
-            ax.yaxis.tick_left()
+            # ax.yaxis.tick_left()
             ax.yaxis.label.set_visible(False)
             ax.margins(x=0.1, y=0.1, tight=False)
 
         fig.subplots_adjust(left=0, bottom=0, right=1, top=1, wspace=0, hspace=0)
 
-        plt.savefig("show.png", bbox_inches="tight", pad_inches=0.3)
-        print("saved show.png")
+        plt.savefig(to_file, bbox_inches="tight", pad_inches=0.3)
+        print(f"saved chart as {to_file}")

@@ -10,7 +10,8 @@ main()
             ;;
         develop)
             printf "\t ..: Starting the developer loop\n"
-            find ./ -name "*.py" | entr -r ./penny-scan.py --budget 250 --go-live --pair ETHEUR
+            shift
+            find ./ -name "*.py" | entr -r ./penny-scan.py --budget 250 --go-live --pair "$*"
             ;;
         *)
             printf "\t ..: Invoking '$*'\n"

@@ -104,6 +104,7 @@ def run(client: Spot, symbol: str, budget: Decimal):
     flippy.feed(data)
 
     print("--- action! ---")
+    flippy.draw_chart("show.png")
 
     # TODO: start a monitoring loop that catches opportunities
 
