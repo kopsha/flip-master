@@ -63,7 +63,10 @@ class PinkyTracker:
         return FIBONACCI[self.wix + 1]
 
     @property
-    def last_close_time(self):
+    def price(self):
+        return self.data["close"].iloc[-1]
+
+    def pop_close_time(self):
         self.data.drop(self.data.tail(1).index, inplace=True)
         close_time = int(self.data["close_time"].iloc[-1].timestamp()) * 1000
         return close_time

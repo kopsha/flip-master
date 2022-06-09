@@ -101,14 +101,27 @@ class PennyHunter:
     def tick(self):
         print(".", end="", flush=True)
         for symbol, dog in self.sniffers.items():
-            data = self.live_read(symbol, since=dog.last_close_time)
+            data = self.live_read(symbol, since=dog.pop_close_time())
             dog.feed(data)
             dog.run_indicators()
+
             current = dog.apply_triggers()
             previous = self.last_signals.get(symbol, FlipSignals.HOLD)
 
             if current != previous and current != FlipSignals.HOLD:
-                self.notifier.say(f"Maybe {current.name} {symbol}...")
+                diagnosis = "overbought" if current == FlipSignals.SELL else "oversold"
+                message = (
+                    "{base} is {status} at {price} EUR."
+                    "Maybe we can {action}."
+                    "[trade](https://www.binance.com/en/trade/{base}_{quote}?type=spot)"
+                ).format(
+                    base=dog.base_symbol,
+                    quote=dog.quote_symbol,
+                    status=diagnosis,
+                    price=dog.price,
+                    action=current.name,
+                )
+                self.notifier.say(message)
                 dog.draw_chart(f"./{symbol}/fast_chart.png", limit=HALF_DAY_CYCLE)
 
                 long_data = self.cached_read(symbol)
@@ -119,9 +132,9 @@ class PennyHunter:
 
             self.last_signals[symbol] = current
 
-    def cached_read(self, symbol: str):
+    def cached_read(self, symbol: str, limit=FULL_CYCLE):
         this_hour = datetime.now().replace(minute=0, second=0, microsecond=0)
-        start_at = this_hour - timedelta(hours=FULL_CYCLE)
+        start_at = this_hour - timedelta(hours=limit)
         since = int(start_at.timestamp()) * 1000
         enough = int(this_hour.timestamp()) * 1000
 
@@ -137,18 +150,16 @@ class PennyHunter:
             since = data[-1][6]
 
         if since < enough:
-            missing_chunk = client.klines(
-                symbol, "1h", startTime=since, limit=FULL_CYCLE
-            )
+            missing_chunk = client.klines(symbol, "1h", startTime=since, limit=limit)
             data += missing_chunk
             print(f"Read {len(missing_chunk)} {symbol} records from client.")
 
             with open(cache_file, "wb") as data_file:
-                useful_data = data[-FULL_CYCLE:-1]
+                useful_data = data[-limit:-1]
                 pickle.dump(useful_data, data_file, protocol=pickle.HIGHEST_PROTOCOL)
                 print(f"Cached {len(useful_data)} to {cache_file}")
 
-        return data[-FULL_CYCLE:]
+        return data[-limit:]
 
     def live_read(self, symbol: str, limit=HALF_DAY_CYCLE, since=None):
         return client.klines(symbol, "1m", limit=limit, startTime=since)
