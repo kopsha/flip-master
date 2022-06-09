@@ -1,6 +1,7 @@
 from decimal import Decimal
 from datetime import datetime, timedelta
 
+import numpy as np
 import pandas as pd
 import mplfinance as mpf
 from matplotlib import pyplot as plt, dates as mdates
@@ -95,10 +96,6 @@ class PinkyTracker:
         if len(kline_data) > FULL_CYCLE:
             kline_data = kline_data[-FULL_CYCLE:]
             print(f"Provided feed was truncated to last {len(kline_data)}.")
-
-        for dx in kline_data[-4:]:
-            kx = KLinePoint(*dx)
-            print(kx)
 
         klines = [CandleStick(x) for x in kline_data]
         new_df = pd.DataFrame(klines)
@@ -260,15 +257,17 @@ class PinkyTracker:
             }
         )
 
-        df["stdev"] = df["close"].rolling(self.fast_window).std(ddof=0)
-        df["volume_stdev"] = df["volume"].rolling(self.fast_window).std(ddof=0)
-        df["wtf"] = df["stdev"] * df["volume_stdev"]
-        df["mfi"] = money_flow_index(df["high"], df["low"], df["close"], df["volume"], self.fast_window)
+        high = df["close"].max()
+        low = df["close"].min()
+
+        y = self.FF[-1]
+        ff = [x / y for x in self.FF[3:]]
+        levels1 = [high - (high - low) * x for x in ff]
+        levels2 = [low + (high - low) * x for x in ff]
+        levels = set(levels1 + levels2)
 
         extras = [
-            mpf.make_addplot(df["wtf"], color="red", panel=1),
-            # mpf.make_addplot(df["stdev"], color="darkorange", secondary_y=False, panel=2),
-            mpf.make_addplot(df["mfi"], color="darkorange", panel=2),
+            # mpf.make_addplot(df["fema"], color="red", panel=0, secondary_y=False),
         ]
 
         fig, axes = mpf.plot(
@@ -276,7 +275,8 @@ class PinkyTracker:
             type="candle",
             addplot=extras,
             title=f"{self.base_symbol}/{self.quote_symbol}",
-            volume=True,
+            hlines=list(levels),
+            # volume=True,
             figsize=(13, 8),
             tight_layout=True,
             style="yahoo",
@@ -286,6 +286,7 @@ class PinkyTracker:
 
         for ax in axes:
             # ax.yaxis.tick_left()
+            ax.set_ylim([low, high])
             ax.yaxis.label.set_visible(False)
             ax.margins(x=0.1, y=0.1, tight=False)
 

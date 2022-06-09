@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 import os
 import pickle
+import schedule
 from argparse import ArgumentParser
 from datetime import datetime, timedelta
 from decimal import Decimal, getcontext
 
-from trade_clients import make_binance_test_client, make_binance_client
+from trade_clients import (
+    make_binance_test_client,
+    make_binance_client,
+    make_telegram_client,
+)
 from binance.spot import Spot
 from binance.error import ClientError
 
@@ -51,24 +56,28 @@ def set_decimal_precison_context(symbol_data):
     )
 
 
+def get_price_ticker(client: Spot, symbols):
+    price_data = client.ticker_price()
+    own_tickers = filter(lambda x: x["symbol"] in symbols, price_data)
+    pennies = {tick["symbol"][:-3]: Decimal(tick["price"]) for tick in own_tickers}
+    return pennies
+
+
 def run(client: Spot, symbol: str, budget: Decimal):
     """initialize client, enviroment and the bot"""
     try:
         account_data = client.account()
+        balances = account_data.pop("balances")
+
         exchage_data = client.exchange_info(symbol)
         serverTimestamp = int(exchage_data["serverTime"]) // 1000
-        print("server time", datetime.utcfromtimestamp(serverTimestamp).isoformat())
 
-        balances = account_data.pop("balances")
         assets = list(filter(lambda x: float(x["free"]) > 0, balances))
-        own_symbols = {x["asset"] + "EUR" for x in assets}
-        price_data = client.ticker_price()
-        own_tickers = filter(lambda x: x["symbol"] in own_symbols, price_data)
-        price_eur = {
-            tick["symbol"][:-3]: Decimal(tick["price"]) for tick in own_tickers
-        }
+        symbols = {x["asset"] + "EUR" for x in assets}
+        price_list = get_price_ticker(client, symbols)
 
     except ClientError as error:
+
         print("Client error:", error.error_message)
         return -1
 
@@ -84,7 +93,7 @@ def run(client: Spot, symbol: str, budget: Decimal):
     for balance in filter(lambda x: float(x["free"]) > 0, balances):
         amount = Decimal(balance["free"]) + Decimal(balance["locked"])
         name = balance["asset"]
-        value = amount * price_eur.get(name, 0)
+        value = amount * price_list.get(name, 1)
         print(f"{amount:18} {name}  =>  {value:7.2f} EUR")
         wallet_value += value
     print(f"               (value) {wallet_value:12.2f} EUR")
@@ -103,7 +112,6 @@ def run(client: Spot, symbol: str, budget: Decimal):
     flippy = PinkyTracker(pair, budget, commission, wix=5)
     flippy.feed(data)
 
-    print("--- action! ---")
     flippy.draw_chart("show.png")
 
     # TODO: start a monitoring loop that catches opportunities
@@ -112,11 +120,10 @@ def run(client: Spot, symbol: str, budget: Decimal):
 if __name__ == "__main__":
 
     args = ArgumentParser(description="Trading on the flip side")
-    args.add_argument("--pair", required=True)
-    args.add_argument("--budget", type=Decimal, required=True)
     args.add_argument("--go-live", action="store_const", const=True, default=False)
 
     actual = args.parse_args()
+    print("--- action! ---")
 
     if actual.go_live:
         print("- using live connector")
@@ -125,5 +132,7 @@ if __name__ == "__main__":
         print("- using test connector")
         client = make_binance_test_client()
 
-    run(client, actual.pair, actual.budget)
+    notifier = make_telegram_client()
+    run(client)
+
     print("--- the end ---")

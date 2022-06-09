@@ -7,8 +7,9 @@ RUN apt update && apt install --yes \
 
 # install python dependencies
 RUN mkdir -p /app/src \
-    && mkdir -p /app/socks
+    && mkdir -p /app/config/matplotlib
 WORKDIR /app
+ENV MPLCONFIGDIR=/app/config/matplotlib
 
 COPY requirements.txt /app/
 RUN pip install --no-cache-dir --upgrade pip \
