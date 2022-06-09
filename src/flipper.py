@@ -11,7 +11,7 @@ import matplotlib.dates as mdates
 from binance.spot import Spot
 from binance.error import ClientError
 
-from metaflip import FlipSignals, KLinePoint, PricePoint, AssetMeta
+from metaflip import MarketSignal, KLinePoint, PricePoint, AssetMeta
 
 
 class Flipper:
@@ -102,7 +102,7 @@ class Flipper:
         balance = self.split // 2 - 1
         for order in self.order_history:
             signal, price, timestamp = order.values()
-            if signal == FlipSignals.BUY:
+            if signal == MarketSignal.BUY:
                 balance += 1
             else:
                 balance -= 1
@@ -110,9 +110,9 @@ class Flipper:
                 f"{balance}",
                 xy=(timestamp, price),
                 fontsize="small",
-                xytext=((0.0, +75.0) if signal == FlipSignals.SELL else (0.0, -75.0)),
+                xytext=((0.0, +75.0) if signal == MarketSignal.SELL else (0.0, -75.0)),
                 textcoords="offset pixels",
-                color="green" if signal == FlipSignals.SELL else "red",
+                color="green" if signal == MarketSignal.SELL else "red",
                 horizontalalignment="center",
                 verticalalignment="center",
                 arrowprops=dict(arrowstyle="->"),
@@ -168,7 +168,7 @@ class Flipper:
 
         if len(self.prices) < self.window:
             # print(f"{len(self.prices)} datapoints are not enough for a {self.window} window.")
-            return FlipSignals.HOLD
+            return MarketSignal.HOLD
 
         price = self.prices[-1]
         mm = self.bb_mean[-1]
@@ -176,26 +176,26 @@ class Flipper:
         velocity = self.velocity[-1]
         dist = price - mm
 
-        signal = FlipSignals.HOLD
-        if self.follow_up in {FlipSignals.ENTRY, FlipSignals.BUY}:
+        signal = MarketSignal.HOLD
+        if self.follow_up in {MarketSignal.ENTRY, MarketSignal.BUY}:
             if velocity >= 0:
-                signal = FlipSignals.BUY
+                signal = MarketSignal.BUY
                 self.follow_up = None
-        elif self.follow_up in {FlipSignals.SELL}:
+        elif self.follow_up in {MarketSignal.SELL}:
             if velocity <= 0:
-                signal = FlipSignals.SELL
+                signal = MarketSignal.SELL
                 self.follow_up = None
         else:
             if dist >= mdev:
                 if velocity >= 0:
-                    self.follow_up = FlipSignals.SELL
+                    self.follow_up = MarketSignal.SELL
                 else:
-                    signal = FlipSignals.SELL
+                    signal = MarketSignal.SELL
             elif dist <= -mdev:
                 if velocity <= 0:
-                    self.follow_up = FlipSignals.BUY
+                    self.follow_up = MarketSignal.BUY
                 else:
-                    signal = FlipSignals.BUY
+                    signal = MarketSignal.BUY
 
         return signal
 
@@ -218,7 +218,7 @@ class Flipper:
         self.quote -= amount
         self.base += bought
         self.order_history.append(
-            dict(signal=FlipSignals.BUY, price=self.last_price, time=self.timeline[-1])
+            dict(signal=MarketSignal.BUY, price=self.last_price, time=self.timeline[-1])
         )
         heappush(self.buy_heap, self.last_price)
 
@@ -243,7 +243,7 @@ class Flipper:
         self.base -= sold
         self.quote += amount * (1 - self.commission)
         self.order_history.append(
-            dict(signal=FlipSignals.SELL, price=self.last_price, time=self.timeline[-1])
+            dict(signal=MarketSignal.SELL, price=self.last_price, time=self.timeline[-1])
         )
         heappop(self.buy_heap)
 
@@ -343,9 +343,9 @@ class Flipper:
         signal = self.compute_signal()
 
         amount = self.budget / self.split
-        if signal == FlipSignals.BUY:
+        if signal == MarketSignal.BUY:
             self.buy(client, amount)
-        elif signal == FlipSignals.SELL:
+        elif signal == MarketSignal.SELL:
             self.sell(client, amount)
 
         print(".", end="", flush=True)
@@ -356,10 +356,10 @@ class Flipper:
             self.consume(deque([kline_data]))
             signal = self.compute_signal()
 
-            if signal == FlipSignals.BUY:
+            if signal == MarketSignal.BUY:
                 self.fake_buy(amount)
 
-            elif signal == FlipSignals.SELL:
+            elif signal == MarketSignal.SELL:
                 self.fake_sell(amount)
 
         self.draw_trading_chart(description)

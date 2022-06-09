@@ -7,8 +7,12 @@ from decimal import Decimal
 from statistics import mean
 
 
-# for hourly candlesticks
+# minute candlesticks
+FAST_CYCLE = 120
+QUARTER_DAY_CYCLE = 360
 HALF_DAY_CYCLE = 720
+
+# for hourly candlesticks
 DAILY_CYCLE = 24
 WEEKLY_CYCLE = 7 * DAILY_CYCLE
 FULL_CYCLE = 4 * WEEKLY_CYCLE
@@ -76,7 +80,7 @@ class CandleStick:
         self.trades_count = int(kline.trades_count)
 
 
-class FlipSignals(IntEnum):
+class MarketSignal(IntEnum):
     HOLD = 0
     BUY = 1
     SELL = 2

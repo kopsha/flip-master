@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from datetime import datetime
 from statistics import mean, stdev
-from metaflip import FlipSignals, KLinePoint, PricePoint
+from metaflip import MarketSignal, KLinePoint, PricePoint
 
 
 class FlipViewer:
@@ -97,9 +97,9 @@ class FlipViewer:
                 signal.name,
                 xy=(mark_time, price),
                 fontsize="large",
-                xytext=((0.0, +34.0) if signal == FlipSignals.SELL else (0.0, -34.0)),
+                xytext=((0.0, +34.0) if signal == MarketSignal.SELL else (0.0, -34.0)),
                 textcoords="offset pixels",
-                color="green" if signal == FlipSignals.SELL else "red",
+                color="green" if signal == MarketSignal.SELL else "red",
                 horizontalalignment="center",
                 verticalalignment="center",
                 arrowprops=dict(arrowstyle="->"),
@@ -137,7 +137,7 @@ class FlipViewer:
 
         # on entry buy 50%
         entry = self.orders[0]
-        assert entry["signal"] == FlipSignals.BUY
+        assert entry["signal"] == MarketSignal.BUY
         print("== Entry ==")
         base, quote = buy(base, quote, quote / 2, entry["price"])
         entry_base = base
@@ -152,9 +152,9 @@ class FlipViewer:
         for order in self.orders[1:]:
             signal, price, _ = order.values()
 
-            if signal == FlipSignals.BUY:
+            if signal == MarketSignal.BUY:
                 base, quote = buy(base, quote, step, price)
-            elif signal == FlipSignals.SELL:
+            elif signal == MarketSignal.SELL:
                 base, quote = sell(base, quote, step, price)
 
             print(

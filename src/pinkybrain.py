@@ -13,7 +13,7 @@ from ta.volume import money_flow_index
 from metaflip import (
     KLinePoint,
     CandleStick,
-    FlipSignals,
+    MarketSignal,
     FULL_CYCLE,
     WEEKLY_CYCLE,
     DAILY_CYCLE,
@@ -64,7 +64,7 @@ class PinkyTracker:
 
     @property
     def price(self):
-        return self.data["close"].iloc[-1]
+        return float(self.data["close"].iloc[-1])
 
     def pop_close_time(self):
         self.data.drop(self.data.tail(1).index, inplace=True)
@@ -96,25 +96,86 @@ class PinkyTracker:
                 "volume": "float",
             }
         )
-        adx = ADXIndicator(high=df["high"], low=df["low"], close=df["close"])
+        adx = ADXIndicator(high=df["high"], low=df["low"], close=df["close"], window=self.fast_window)
         self.data["adx_pos"] = adx.adx_pos()
         self.data["adx_neg"] = adx.adx_neg()
 
-    def apply_triggers(self):
+        bb = BollingerBands(close=df["close"], window=self.window)
+        self.data["bb_high"] = bb.bollinger_hband()
+        self.data["bb_low"] = bb.bollinger_lband()
+
+        self.data["mfi"] = money_flow_index(df["high"], df["low"], df["close"], df["volume"], window=self.fast_window)
+
+    def apply_adx_trigger(self):
         if self.data["adx_pos"].size == 0:
-            return FlipSignals.HOLD
+            return MarketSignal.HOLD
 
         adx_pos = self.data["adx_pos"].iloc[-1]
         adx_neg = self.data["adx_neg"].iloc[-1]
         treshold = 30
 
         if adx_pos >= treshold and adx_pos > adx_neg:
-            return FlipSignals.SELL
+            return MarketSignal.SELL
 
         if adx_neg >= treshold and adx_neg > adx_pos:
-            return FlipSignals.BUY
+            return MarketSignal.BUY
 
-        return FlipSignals.HOLD
+        return MarketSignal.HOLD
+
+    def apply_mfi_trigger(self):
+        if self.data["mfi"].size == 0:
+            return MarketSignal.HOLD
+
+        mfi = self.data["mfi"].iloc[-1]
+
+        if mfi >= self.MFI_HIGH:
+            return MarketSignal.SELL
+
+        if mfi <= self.MFI_LOW:
+            return MarketSignal.BUY
+
+        return MarketSignal.HOLD
+
+    def apply_bb_trigger(self):
+        if self.data["mfi"].size == 0:
+            return MarketSignal.HOLD
+
+        price = self.price
+        high = self.data["bb_high"].iloc[-1]
+        low = self.data["bb_low"].iloc[-1]
+        tolerance = price * 0.001
+
+        if price + tolerance >= high:
+            return MarketSignal.SELL
+
+        if price - tolerance <= low:
+            return MarketSignal.BUY
+
+        return MarketSignal.HOLD
+
+    def pick_dominant_signal(self, signals):
+        bears = signals.count(MarketSignal.SELL)
+        bulls = signals.count(MarketSignal.BUY)
+
+        if bears > bulls and bears >= 2:
+            signal = MarketSignal.SELL
+        elif bulls > bears and bulls >= 2:
+            signal = MarketSignal.BUY
+        else:
+            signal = MarketSignal.HOLD
+
+        return signal
+
+    def apply_all_triggers(self):
+        triggers = dict(
+            bb=self.apply_bb_trigger(),
+            mfi=self.apply_mfi_trigger(),
+            adx=self.apply_adx_trigger(),
+        )
+
+        print(self.base_symbol, triggers, flush=True)
+
+        return self.pick_dominant_signal(list(triggers.values()))
 
     def draw_chart(self, to_file, limit=FULL_CYCLE):
 
@@ -129,11 +190,22 @@ class PinkyTracker:
         )  # again :()
 
         extras = [
+
+            mpf.make_addplot(
+                self.data["bb_high"], color="dodgerblue", panel=0, secondary_y=False
+            ),
+            mpf.make_addplot(
+                self.data["bb_low"], color="darkorange", panel=0, secondary_y=False
+            ),
+
             mpf.make_addplot(
                 self.data["adx_pos"], color="dodgerblue", panel=1, secondary_y=False
             ),
             mpf.make_addplot(
                 self.data["adx_neg"], color="darkorange", panel=1, secondary_y=False
+            ),
+            mpf.make_addplot(
+                self.data["mfi"], color="tomato", panel=1, secondary_y=False
             ),
         ]
 
@@ -147,9 +219,13 @@ class PinkyTracker:
             tight_layout=True,
             style="yahoo",
             xrotation=0,
-            warn_too_much_data=limit,
             returnfig=True,
         )
+
+        for ax in axes:
+            ax.yaxis.tick_left()
+            ax.yaxis.label.set_visible(False)
+            ax.margins(x=0.1, y=0.1, tight=False)
 
         plt.savefig(to_file, bbox_inches="tight", pad_inches=0.3, dpi=300)
         plt.close()

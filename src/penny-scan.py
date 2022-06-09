@@ -9,7 +9,7 @@ from argparse import ArgumentParser
 from datetime import datetime, timedelta
 from decimal import Decimal, getcontext
 
-from metaflip import WEEKLY_CYCLE, HALF_DAY_CYCLE, FlipSignals
+from metaflip import WEEKLY_CYCLE, FAST_CYCLE, MarketSignal
 from trade_clients import (
     make_binance_client,
     make_binance_test_client,
@@ -84,15 +84,15 @@ class PennyHunter:
             data = self.cached_read(symbol)
             dog.feed(data)
             dog.run_indicators()
-            # dog.draw_chart(f"./{symbol}/hourly_chart.png")
+            dog.draw_chart(f"./{symbol}/hourly_chart.png")
 
         for symbol, dog in self.sniffers.items():
             data = self.live_read(symbol)
-            dog.feed(data, limit=HALF_DAY_CYCLE)
+            dog.feed(data, limit=FAST_CYCLE)
             dog.run_indicators()
-            # dog.draw_chart(f"./{symbol}/fast_chart.png", limit=HALF_DAY_CYCLE)
+            dog.draw_chart(f"./{symbol}/fast_chart.png", limit=FAST_CYCLE)
 
-        schedule.every().minute.at(":07").do(lambda: self.tick())
+        schedule.every().minute.at(":13").do(lambda: self.tick())
 
         while True:
             schedule.run_pending()
@@ -105,14 +105,16 @@ class PennyHunter:
             dog.feed(data)
             dog.run_indicators()
 
-            current = dog.apply_triggers()
-            previous = self.last_signals.get(symbol, FlipSignals.HOLD)
+            current = dog.apply_all_triggers()
+            previous = self.last_signals.get(symbol, MarketSignal.HOLD)
 
-            if current != previous and current != FlipSignals.HOLD:
-                diagnosis = "overbought" if current == FlipSignals.SELL else "oversold"
+            if current != previous and current != MarketSignal.HOLD:
+                print("/")
+                dog.draw_chart(f"./{symbol}/fast_chart.png", limit=FAST_CYCLE)
+
+                diagnosis = "overbought" if current == MarketSignal.SELL else "oversold"
                 message = (
-                    "{base} is {status} at {price:.2f} EUR.\n"
-                    "Maybe we can {action}.\n"
+                    "{base} may be {status} at {price:.2f} EUR. We should {action}.\n"
                     "[spot trade](https://www.binance.com/en/trade/{base}_{quote}?type=spot)"
                 ).format(
                     base=dog.base_symbol,
@@ -122,7 +124,6 @@ class PennyHunter:
                     action=current.name,
                 )
                 self.notifier.say(message)
-                dog.draw_chart(f"./{symbol}/fast_chart.png", limit=HALF_DAY_CYCLE)
 
                 long_data = self.cached_read(symbol)
                 watchdog = self.watchdogs[symbol]
@@ -161,7 +162,7 @@ class PennyHunter:
 
         return data[-limit:]
 
-    def live_read(self, symbol: str, limit=HALF_DAY_CYCLE, since=None):
+    def live_read(self, symbol: str, limit=FAST_CYCLE, since=None):
         return client.klines(symbol, "1m", limit=limit, startTime=since)
 
 
