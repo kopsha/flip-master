@@ -26,7 +26,7 @@ RUN chown -R ${UNAME}:${UNAME} /app
 USER ${UNAME}
 
 # for mac only
-ENV ENTR_INOTIFY_WORKAROUND=1
+# ENV ENTR_INOTIFY_WORKAROUND=1
 
 COPY entrypoint /app/
 ENTRYPOINT ["/app/entrypoint"]

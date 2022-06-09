@@ -9,7 +9,8 @@ class TelegramNotifier:
     def say(self, message):
         url = (
             "https://api.telegram.org/bot{token}/sendMessage?"
-            "chat_id={chat_id}&parse_mode=Markdown&text={message}"
+            "chat_id={chat_id}&text={message}"
+            "&parse_mode=Markdown&disable_web_page_preview=true"
         ).format(token=self.token, chat_id=self.owner_id, message=message)
 
         response = requests.get(url)

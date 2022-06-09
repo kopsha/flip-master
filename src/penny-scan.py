@@ -9,7 +9,7 @@ from argparse import ArgumentParser
 from datetime import datetime, timedelta
 from decimal import Decimal, getcontext
 
-from metaflip import FULL_CYCLE, HALF_DAY_CYCLE, FlipSignals
+from metaflip import WEEKLY_CYCLE, HALF_DAY_CYCLE, FlipSignals
 from trade_clients import (
     make_binance_client,
     make_binance_test_client,
@@ -111,9 +111,9 @@ class PennyHunter:
             if current != previous and current != FlipSignals.HOLD:
                 diagnosis = "overbought" if current == FlipSignals.SELL else "oversold"
                 message = (
-                    "{base} is {status} at {price} EUR."
-                    "Maybe we can {action}."
-                    "[trade](https://www.binance.com/en/trade/{base}_{quote}?type=spot)"
+                    "{base} is {status} at {price:.2f} EUR.\n"
+                    "Maybe we can {action}.\n"
+                    "[spot trade](https://www.binance.com/en/trade/{base}_{quote}?type=spot)"
                 ).format(
                     base=dog.base_symbol,
                     quote=dog.quote_symbol,
@@ -132,7 +132,7 @@ class PennyHunter:
 
             self.last_signals[symbol] = current
 
-    def cached_read(self, symbol: str, limit=FULL_CYCLE):
+    def cached_read(self, symbol: str, limit=WEEKLY_CYCLE):
         this_hour = datetime.now().replace(minute=0, second=0, microsecond=0)
         start_at = this_hour - timedelta(hours=limit)
         since = int(start_at.timestamp()) * 1000
