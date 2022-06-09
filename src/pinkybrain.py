@@ -17,38 +17,19 @@ from metaflip import (
     FULL_CYCLE,
     WEEKLY_CYCLE,
     DAILY_CYCLE,
+    FIBONACCI,
 )
 
 
 class PinkyTracker:
-    FF = [
-        2,
-        3,
-        5,
-        8,
-        13,
-        21,
-        34,
-        55,
-        89,
-        144,
-    ]
     SIGNAL_TTL = 5
     MFI_HIGH = 65
     MFI_LOW = 35
 
-    def __init__(self, trading_pair, budget, commission, wix):
+    def __init__(self, trading_pair, wix=6):
         self.base_symbol, self.quote_symbol = trading_pair
-        self.commission = Decimal(commission)
-        self.quote = Decimal(budget)
-        self.base = Decimal("0")
-        self.is_committed = False
-
-        # some parameters
-        self.stop_loss_factor = 0.05
         self.wix = wix
 
-        # running data
         self.data = pd.DataFrame(
             columns=[
                 "open_time",
@@ -60,190 +41,79 @@ class PinkyTracker:
                 "close_time",
             ]
         )
-        self.order_history = list()
-        self.commit_price = None
-        self.stop_loss = None
-
-    def wallet(self, price) -> str:
-        est_value = (1 - self.commission) * self.base * price + self.quote
-        return f"{self.base:.8f} {self.base_symbol} + {self.quote} {self.quote_symbol} => {est_value} {self.quote_symbol}"
-
-    @property
-    def window(self):
-        return self.FF[self.wix]
 
     @property
     def faster_window(self):
-        return self.FF[self.wix - 1]
+        return FIBONACCI[self.wix - 1]
 
     @property
     def fast_window(self):
-        return self.FF[self.wix - 1]
+        return FIBONACCI[self.wix - 1]
+
+    @property
+    def window(self):
+        return FIBONACCI[self.wix]
 
     @property
     def slow_window(self):
-        return self.FF[self.wix + 1]
+        return FIBONACCI[self.wix + 1]
 
     @property
     def slower_window(self):
-        return self.FF[self.wix + 1]
+        return FIBONACCI[self.wix + 1]
 
-    def feed(self, kline_data):
+    @property
+    def last_close_time(self):
+        self.data.drop(self.data.tail(1).index, inplace=True)
+        close_time = int(self.data["close_time"].iloc[-1].timestamp()) * 1000
+        return close_time
+
+    def feed(self, kline_data, limit=FULL_CYCLE):
         if not kline_data:
             print("Provided feed seems empty, skipped.")
             return
 
-        if len(kline_data) > FULL_CYCLE:
-            kline_data = kline_data[-FULL_CYCLE:]
+        if len(kline_data) > limit:
+            kline_data = kline_data[-limit:]
             print(f"Provided feed was truncated to last {len(kline_data)}.")
 
         klines = [CandleStick(x) for x in kline_data]
         new_df = pd.DataFrame(klines)
         new_df.index = pd.DatetimeIndex(new_df["open_time"])
 
-        self.data = pd.concat([self.data.tail(FULL_CYCLE - new_df.size), new_df])
+        self.data = pd.concat([self.data.tail(limit - new_df.size), new_df])
 
-        # add indicators to dataframe
-        self.data["slope"] = self.data["close"].diff()
-
+    def run_indicators(self):
         df = self.data.astype(
             {
                 "open": "float",
                 "high": "float",
                 "low": "float",
                 "close": "float",
+                "volume": "float",
             }
         )
+        adx = ADXIndicator(high=df["high"], low=df["low"], close=df["close"])
+        self.data["adx_pos"] = adx.adx_pos()
+        self.data["adx_neg"] = adx.adx_neg()
 
-    def buy_in(self, itime, price):
-        spent = min(self.quote, 250)
-        bought = (1 - self.commission) * spent / price
+    def apply_triggers(self):
+        if self.data["adx_pos"].size == 0:
+            return FlipSignals.HOLD
 
-        self.quote -= spent
-        self.base += bought
-        self.order_history.append((FlipSignals.BUY, itime, price))
+        adx_pos = self.data["adx_pos"].iloc[-1]
+        adx_neg = self.data["adx_neg"].iloc[-1]
+        treshold = 30
 
-        self.spent = spent
-        self.is_committed = True
-        self.commit_price = Decimal(price)
+        if adx_pos >= treshold and adx_pos > adx_neg:
+            return FlipSignals.SELL
 
-        print(
-            f"Bought {bought} {self.base_symbol} at {price} {self.quote_symbol}, spent {spent} {self.quote_symbol}",
-            f"\n\tWallet: {self.wallet(price)}",
-        )
+        if adx_neg >= treshold and adx_neg > adx_pos:
+            return FlipSignals.BUY
 
-    def sell_out(self, itime, price):
-        sold = self.base
-        amount = (1 - self.commission) * sold * price
-        profit = amount - self.spent
+        return FlipSignals.HOLD
 
-        if profit < 0:
-            print("Not selling without profit", profit, self.quote_symbol)
-            print(self)
-            return
-
-        self.base -= sold
-        self.quote += amount
-        self.order_history.append((FlipSignals.SELL, itime, price))
-
-        self.is_committed = False
-        self.commit_price = None
-
-        print(
-            f" Sold  {sold} {self.base_symbol} at {price} {self.quote_symbol} for {profit} {self.quote_symbol} profit",
-            f"\n\tWallet: {self.wallet(price)}",
-        )
-
-    def age_meta_signals(self, meta_signals):
-        aged_meta_signals = dict()
-        for key in meta_signals:
-            ms, ttl = meta_signals[key]
-            if ms != FlipSignals.HOLD:
-                ttl -= 1
-                if ttl == 0:
-                    ms = FlipSignals.HOLD
-                    ttl = None
-            aged_meta_signals[key] = (ms, ttl)
-        return aged_meta_signals
-
-    def apply_money_flow(self, row, previous):
-        if row["mfi"] >= self.MFI_HIGH:
-            ms, ttl = FlipSignals.SELL, self.SIGNAL_TTL
-        elif row["mfi"] <= self.MFI_LOW:
-            ms, ttl = FlipSignals.BUY, self.SIGNAL_TTL
-        else:
-            ms, ttl = previous or (FlipSignals.HOLD, None)
-        return ms, ttl
-
-    def apply_bollinger_bands(self, row, previous):
-        tolerance = 0.001
-        bb_high = row["bb_high"] * (1 - tolerance)
-        bb_low = row["bb_low"] * (1 + tolerance)
-
-        if float(row["high"]) >= bb_high and row["slope"] < 0:
-            ms, ttl = FlipSignals.SELL, self.SIGNAL_TTL
-        elif float(row["low"]) <= bb_low and row["slope"] > 0:
-            ms, ttl = FlipSignals.BUY, self.SIGNAL_TTL
-        else:
-            ms, ttl = previous or (FlipSignals.HOLD, None)
-        return ms, ttl
-
-    def apply_psar_signals(self, row, previous):
-        if row.isna()["psar_up"]:
-            ms, ttl = FlipSignals.SELL, self.SIGNAL_TTL
-        elif row.isna()["psar_down"]:
-            ms, ttl = FlipSignals.BUY, self.SIGNAL_TTL
-        else:
-            ms, ttl = previous or (FlipSignals.HOLD, None)
-        return ms, ttl
-
-    def apply_stc_signals(self, row, previous):
-        if row["stc"] < 25:
-            ms, ttl = FlipSignals.SELL, self.SIGNAL_TTL
-        elif row["stc"] > 75:
-            ms, ttl = FlipSignals.BUY, self.SIGNAL_TTL
-        else:
-            ms, ttl = previous or (FlipSignals.HOLD, None)
-        return ms, ttl
-
-    def pick_dominant_signal(self, meta_signals):
-        mss = [ms for ms, _ in meta_signals.values()]
-        bears = mss.count(FlipSignals.SELL)
-        bulls = mss.count(FlipSignals.BUY)
-
-        if bears > bulls and bears > 2:
-            signal = FlipSignals.SELL
-        elif bulls > bears and bulls > 2:
-            signal = FlipSignals.BUY
-        else:
-            signal = FlipSignals.HOLD
-
-        return signal
-
-    def backtest(self):
-
-        previous_meta = dict()
-
-        for i, (_, row) in enumerate(self.data.iterrows()):
-            if i <= self.slower_window:
-                continue
-
-            meta_signals = dict(
-                # mfi=self.apply_money_flow(row, previous_meta.get("mfi")),
-                # bb=self.apply_bollinger_bands(row, previous_meta.get("bb")),
-                # psar=self.apply_psar_signals(row, previous_meta.get("psar")),
-                # stc=self.apply_stc_signals(row, previous_meta.get("stc")),
-            )
-
-            aligned = self.pick_dominant_signal(meta_signals)
-            if self.is_committed and aligned == FlipSignals.SELL:
-                self.sell_out(i, row["close"])
-            elif not self.is_committed and aligned == FlipSignals.BUY:
-                self.buy_in(i, row["close"])
-
-            previous_meta = self.age_meta_signals(meta_signals)
-
-    def draw_chart(self, to_file):
+    def draw_chart(self, to_file, limit=FULL_CYCLE):
 
         df = self.data.astype(
             {
@@ -252,22 +122,16 @@ class PinkyTracker:
                 "low": "float",
                 "close": "float",
                 "volume": "float",
-                "maker_volume": "float",
-                "taker_volume": "float",
             }
-        )
-
-        high = df["close"].max()
-        low = df["close"].min()
-
-        y = self.FF[-1]
-        ff = [x / y for x in self.FF[3:]]
-        levels1 = [high - (high - low) * x for x in ff]
-        levels2 = [low + (high - low) * x for x in ff]
-        levels = set(levels1 + levels2)
+        )  # again :()
 
         extras = [
-            # mpf.make_addplot(df["fema"], color="red", panel=0, secondary_y=False),
+            mpf.make_addplot(
+                self.data["adx_pos"], color="dodgerblue", panel=1, secondary_y=False
+            ),
+            mpf.make_addplot(
+                self.data["adx_neg"], color="darkorange", panel=1, secondary_y=False
+            ),
         ]
 
         fig, axes = mpf.plot(
@@ -275,22 +139,15 @@ class PinkyTracker:
             type="candle",
             addplot=extras,
             title=f"{self.base_symbol}/{self.quote_symbol}",
-            hlines=list(levels),
             # volume=True,
             figsize=(13, 8),
             tight_layout=True,
             style="yahoo",
-            warn_too_much_data=FULL_CYCLE,
+            xrotation=0,
+            warn_too_much_data=limit,
             returnfig=True,
         )
 
-        for ax in axes:
-            # ax.yaxis.tick_left()
-            ax.set_ylim([low, high])
-            ax.yaxis.label.set_visible(False)
-            ax.margins(x=0.1, y=0.1, tight=False)
-
-        fig.subplots_adjust(left=0, bottom=0, right=1, top=1, wspace=0, hspace=0)
-
-        plt.savefig(to_file, bbox_inches="tight", pad_inches=0.3)
+        plt.savefig(to_file, bbox_inches="tight", pad_inches=0.3, dpi=300)
+        plt.close()
         print(f"saved chart as {to_file}")

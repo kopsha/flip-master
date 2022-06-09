@@ -7,7 +7,7 @@ from notifier import TelegramNotifier
 CREDENTIALS_CACHE = "credentials.ini"
 
 
-def make_binance_client():
+def make_binance_client() -> Spot:
     credentials = configparser.ConfigParser()
     if os.path.isfile(CREDENTIALS_CACHE):
         credentials.read(CREDENTIALS_CACHE)
@@ -26,7 +26,7 @@ def make_binance_client():
     return client
 
 
-def make_binance_test_client():
+def make_binance_test_client() -> Spot:
     credentials = configparser.ConfigParser()
     if os.path.isfile(CREDENTIALS_CACHE):
         credentials.read(CREDENTIALS_CACHE)
@@ -48,7 +48,7 @@ def make_binance_test_client():
     return client
 
 
-def make_telegram_client():
+def make_telegram_client() -> TelegramNotifier:
     credentials = configparser.ConfigParser()
     if os.path.isfile(CREDENTIALS_CACHE):
         credentials.read(CREDENTIALS_CACHE)

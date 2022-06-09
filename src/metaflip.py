@@ -7,9 +7,14 @@ from decimal import Decimal
 from statistics import mean
 
 
+# for hourly candlesticks
+HALF_DAY_CYCLE = 720
 DAILY_CYCLE = 24
-WEEKLY_CYCLE = DAILY_CYCLE * 7
-FULL_CYCLE = WEEKLY_CYCLE * 4
+WEEKLY_CYCLE = 7 * DAILY_CYCLE
+FULL_CYCLE = 4 * WEEKLY_CYCLE
+
+FIBONACCI = [1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233]
+
 
 """
 Some background info:

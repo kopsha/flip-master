@@ -1,20 +1,23 @@
 #!/usr/bin/env python3
+
+from collections import defaultdict
 import os
 import pickle
 import time
+import schedule
 from argparse import ArgumentParser
 from datetime import datetime, timedelta
 from decimal import Decimal, getcontext
 
-import schedule
-from binance.spot import Spot
-
-from metaflip import FULL_CYCLE
+from metaflip import FULL_CYCLE, HALF_DAY_CYCLE, FlipSignals
 from trade_clients import (
     make_binance_client,
     make_binance_test_client,
     make_telegram_client,
+    Spot,
+    TelegramNotifier,
 )
+from pinkybrain import PinkyTracker
 
 
 def set_decimal_precison_context(symbol_data):
@@ -22,29 +25,20 @@ def set_decimal_precison_context(symbol_data):
         symbol_data["quoteAssetPrecision"], symbol_data["baseAssetPrecision"]
     )
 
-    # prepare cache folder
-    # os.makedirs(f"./{symbol}", exist_ok=True)
-
-    # try:
-    #     # read initial data
-    #     data = smart_read(client, symbol)
-    # except ClientError as error:
-    #     print("x: Cannot read klines:", error.error_message)
-    #     return -1
-
-    # pair = (symbol_data["baseAsset"], symbol_data["quoteAsset"])
-    # flippy = PinkyTracker(pair, budget, commission, wix=5)
-    # flippy.feed(data)
-
-    # flippy.draw_chart("show.png")
-
-    # TODO: start a monitoring loop that catches opportunities
-
 
 class PennyHunter:
-    def __init__(self, client, notifier):
+    def __init__(self, client: Spot, notifier: TelegramNotifier):
         self.client = client
-        self.notifie = notifier
+        self.notifier = notifier
+
+        watchlist = [("BTC", "EUR"), ("ETH", "EUR"), ("LTC", "EUR")]
+        self.watchdogs = {"".join(pair): PinkyTracker(pair) for pair in watchlist}
+        self.sniffers = {"".join(pair): PinkyTracker(pair) for pair in watchlist}
+        self.last_signals = dict()
+
+        # prepare cache folder
+        for symbol in self.watchdogs:
+            os.makedirs(f"./{symbol}", exist_ok=True)
 
     def post_init(self):
         account_data = self.client.account()
@@ -85,22 +79,55 @@ class PennyHunter:
 
     def start(self):
         print("running as service")
-        schedule.every().minute.at(":05").do(lambda: self.tick())
+
+        for symbol, dog in self.watchdogs.items():
+            data = self.cached_read(symbol)
+            dog.feed(data)
+            dog.run_indicators()
+            # dog.draw_chart(f"./{symbol}/hourly_chart.png")
+
+        for symbol, dog in self.sniffers.items():
+            data = self.live_read(symbol)
+            dog.feed(data, limit=HALF_DAY_CYCLE)
+            dog.run_indicators()
+            # dog.draw_chart(f"./{symbol}/fast_chart.png", limit=HALF_DAY_CYCLE)
+
+        schedule.every().minute.at(":07").do(lambda: self.tick())
+
         while True:
             schedule.run_pending()
             time.sleep(0.618033988749894)
 
     def tick(self):
         print(".", end="", flush=True)
+        for symbol, dog in self.sniffers.items():
+            data = self.live_read(symbol, since=dog.last_close_time)
+            dog.feed(data)
+            dog.run_indicators()
+            current = dog.apply_triggers()
+            previous = self.last_signals.get(symbol, FlipSignals.HOLD)
 
-    def smart_read(self, symbol: str):
-        data = list()
+            if current != previous and current != FlipSignals.HOLD:
+                self.notifier.say(f"Maybe {current.name} {symbol}...")
+                dog.draw_chart(f"./{symbol}/fast_chart.png", limit=HALF_DAY_CYCLE)
+
+                long_data = self.cached_read(symbol)
+                watchdog = self.watchdogs[symbol]
+                watchdog.feed(long_data)
+                watchdog.run_indicators()
+                watchdog.draw_chart(f"./{symbol}/hourly_chart.png")
+
+            self.last_signals[symbol] = current
+
+    def cached_read(self, symbol: str):
         this_hour = datetime.now().replace(minute=0, second=0, microsecond=0)
         start_at = this_hour - timedelta(hours=FULL_CYCLE)
         since = int(start_at.timestamp()) * 1000
         enough = int(this_hour.timestamp()) * 1000
 
         cache_file = f"./{symbol}/klines.dat"
+
+        data = list()
         if os.path.isfile(cache_file):
             with open(cache_file, "rb") as data_file:
                 data += pickle.load(data_file)
@@ -114,7 +141,7 @@ class PennyHunter:
                 symbol, "1h", startTime=since, limit=FULL_CYCLE
             )
             data += missing_chunk
-            print(f"Read {len(missing_chunk)} records from client.")
+            print(f"Read {len(missing_chunk)} {symbol} records from client.")
 
             with open(cache_file, "wb") as data_file:
                 useful_data = data[-FULL_CYCLE:-1]
@@ -122,6 +149,9 @@ class PennyHunter:
                 print(f"Cached {len(useful_data)} to {cache_file}")
 
         return data[-FULL_CYCLE:]
+
+    def live_read(self, symbol: str, limit=HALF_DAY_CYCLE, since=None):
+        return client.klines(symbol, "1m", limit=limit, startTime=since)
 
 
 if __name__ == "__main__":
