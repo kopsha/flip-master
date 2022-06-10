@@ -6,6 +6,11 @@ class TelegramNotifier:
         self.token = token
         self.owner_id = owner_id
 
+        # url = "https://api.telegram.org/bot{token}/getUpdates".format(token=self.token, chat_id=self.owner_id)
+        # response = requests.get(url)
+        # data = response.json()
+        # print(data)
+
     def say(self, message):
         url = (
             "https://api.telegram.org/bot{token}/sendMessage?"

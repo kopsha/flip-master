@@ -107,6 +107,12 @@ class PennyHunter:
         schedule.every().minute.at(":07").do(lambda: self.pre_tick())
         schedule.every().minute.at(":13").do(lambda: self.tick())
 
+        start_message = "Penny hunter has started, cached {} records on {}".format(
+            sum([x.data.size for x in self.watchdogs.values()]),
+            ",".join(self.watchdogs.keys()),
+        )
+        self.notifier.say(start_message)
+
         while True:
             schedule.run_pending()
             time.sleep(0.618033988749894)
@@ -122,11 +128,13 @@ class PennyHunter:
             data = self.live_read(symbol, since=dog.pop_close_time())
             dog.feed(data)
             dog.run_indicators()
-
             signal = dog.compute_triggers()
+
             bougth, price = self.commited[symbol]
             profit = (Decimal(dog.price) - price) * bougth * (1 - self.commission)
-            if bougth > Decimal(0) and signal == MarketSignal.SELL:
+
+            # if bougth > Decimal(0) and signal == MarketSignal.SELL:
+            if signal == MarketSignal.SELL:
                 print("/")
                 message = (
                     "{base} may be {status} at {price:.2f} EUR. We should {action}.\n"
@@ -141,8 +149,9 @@ class PennyHunter:
                     action=signal.name,
                 )
                 self.notifier.say(message)
-                dog.draw_chart(f"./{symbol}/fast_chart.png", limit=FAST_CYCLE)
-            elif bougth <= 0 and signal == MarketSignal.BUY:
+                dog.draw_chart(f"./{symbol}/fast_chart.png")
+            # elif bougth <= 0 and signal == MarketSignal.BUY:
+            elif signal == MarketSignal.BUY:
                 print("/")
                 message = (
                     "{base} may be {status} at {price:.2f} EUR. We should {action}.\n"
@@ -157,7 +166,7 @@ class PennyHunter:
                     action=signal.name,
                 )
                 self.notifier.say(message)
-                dog.draw_chart(f"./{symbol}/fast_chart.png", limit=FAST_CYCLE)
+                dog.draw_chart(f"./{symbol}/fast_chart.png")
 
             self.last_signal[symbol] = signal
 

@@ -113,7 +113,7 @@ class PinkyTracker:
         high = self.data["bb_high"].iloc[-1]
         low = self.data["bb_low"].iloc[-1]
         high_velocity = self.data["high_velocity"].iloc[-1]
-        low_velocity = self.data["high_velocity"].iloc[-1]
+        low_velocity = self.data["low_velocity"].iloc[-1]
 
         if self.pre_signal == MarketSignal.SELL and high_velocity <= 0:
             self.pre_signal = None
@@ -129,7 +129,7 @@ class PinkyTracker:
                 self.pre_signal = None
                 return MarketSignal.SELL
         elif price <= low:
-            if high_velocity < 0:
+            if low_velocity < 0:
                 self.pre_signal = MarketSignal.BUY
             else:
                 self.pre_signal = None
@@ -137,7 +137,46 @@ class PinkyTracker:
 
         return MarketSignal.HOLD
 
-    def draw_chart(self, to_file, limit=FULL_CYCLE):
+    def backtest(self):
+        pre_signal = None
+        for i, row in self.data.iterrows():
+            price = float(row["close"])
+            high = row["bb_high"]
+            low = row["bb_low"]
+            high_velocity = row["high_velocity"]
+            low_velocity = row["low_velocity"]
+
+            signal = None
+            if pre_signal == MarketSignal.SELL and high_velocity <= 0:
+                pre_signal = None
+                signal = MarketSignal.SELL
+            elif pre_signal == MarketSignal.BUY and low_velocity >= 0:
+                pre_signal = None
+                signal = MarketSignal.BUY
+
+            if price >= high:
+                if high_velocity > 0:
+                    pre_signal = MarketSignal.SELL
+                else:
+                    pre_signal = None
+                    signal = MarketSignal.SELL
+            elif price <= low:
+                if low_velocity < 0:
+                    pre_signal = MarketSignal.BUY
+                else:
+                    pre_signal = None
+                    signal = MarketSignal.BUY
+
+            print(
+                row["close_time"].isoformat(),
+                pre_signal,
+                signal,
+                price,
+                low_velocity,
+                row["low"],
+            )
+
+    def draw_chart(self, to_file):
 
         df = self.data.astype(
             {
