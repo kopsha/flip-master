@@ -125,6 +125,7 @@ class PennyHunter:
 
             signal = dog.compute_triggers()
             bougth, price = self.commited[symbol]
+            profit = (Decimal(dog.price) - price) * bougth * (1 - self.commission)
             if bougth > Decimal(0) and signal == MarketSignal.SELL:
                 print("/")
                 message = (
@@ -136,7 +137,7 @@ class PennyHunter:
                     quote=dog.quote_symbol,
                     status="overbought",
                     price=dog.price,
-                    profit=(Decimal(dog.price) - price) * bougth * (Decimal(1) - self.commission),
+                    profit=profit,
                     action=signal.name,
                 )
                 self.notifier.say(message)
@@ -153,7 +154,6 @@ class PennyHunter:
                     status="oversold",
                     fiat=self.wallet["EUR"],
                     price=dog.price,
-                    profit=(Decimal(dog.price) - price) * bougth * (Decimal(1) - self.commission),
                     action=signal.name,
                 )
                 self.notifier.say(message)

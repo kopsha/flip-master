@@ -94,7 +94,9 @@ class PinkyTracker:
         self.data["high_velocity"] = self.data["high"].diff()
         self.data["low_velocity"] = self.data["low"].diff()
 
-        adx = ADXIndicator(high=df["high"], low=df["low"], close=df["close"], window=self.faster_window)
+        adx = ADXIndicator(
+            high=df["high"], low=df["low"], close=df["close"], window=self.faster_window
+        )
         self.data["adx_pos"] = adx.adx_pos()
         self.data["adx_neg"] = adx.adx_neg()
 
@@ -102,7 +104,9 @@ class PinkyTracker:
         self.data["bb_high"] = bb.bollinger_hband()
         self.data["bb_low"] = bb.bollinger_lband()
 
-        self.data["mfi"] = money_flow_index(df["high"], df["low"], df["close"], df["volume"], window=self.faster_window)
+        self.data["mfi"] = money_flow_index(
+            df["high"], df["low"], df["close"], df["volume"], window=self.faster_window
+        )
 
     def compute_triggers(self):
         price = self.price

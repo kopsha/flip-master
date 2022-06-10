@@ -16,6 +16,11 @@ class TelegramNotifier:
         response = requests.get(url)
         data = response.json()
         if not data["ok"]:
-            print("Notification error", data["error_code"], "->", data["description"], )
+            print(
+                "Notification error",
+                data["error_code"],
+                "->",
+                data["description"],
+            )
 
         return data
