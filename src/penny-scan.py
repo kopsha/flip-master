@@ -8,6 +8,7 @@ import schedule
 from argparse import ArgumentParser
 from datetime import datetime, timedelta
 from decimal import Decimal, getcontext
+from statistics import mean
 
 from metaflip import WEEKLY_CYCLE, FAST_CYCLE, MarketSignal
 from trade_clients import (
@@ -31,16 +32,17 @@ class PennyHunter:
         self.client = client
         self.notifier = notifier
 
-        watchlist = [("BTC", "EUR"), ("ETH", "EUR"), ("LTC", "EUR")]
+        watchlist = [("BTC", "EUR"), ("ETH", "EUR")]
         self.watchdogs = {"".join(pair): PinkyTracker(pair) for pair in watchlist}
         self.sniffers = {"".join(pair): PinkyTracker(pair) for pair in watchlist}
         self.last_signals = dict()
+        self.commited = dict()
 
         # prepare cache folder
         for symbol in self.watchdogs:
             os.makedirs(f"./{symbol}", exist_ok=True)
 
-    def post_init(self):
+    def update_balance(self):
         account_data = self.client.account()
         balances = list(
             filter(
@@ -57,19 +59,29 @@ class PennyHunter:
         set_decimal_precison_context(symbol_data)
 
         assert account_data["makerCommission"] == account_data["takerCommission"]
-        commission = Decimal(account_data["makerCommission"] or 10) / 10000
-        print(f"Commission: {commission * 100:.1f} %")
+        self.commission = Decimal(account_data["makerCommission"] or 10) / 10000
 
         price_list = self.get_price_ticker(symbols=sorted(symbols))
-        print("Wallet:")
-        wallet_value = 0
+
+        self.wallet = dict()
         for balance in balances:
             amount = Decimal(balance["free"]) + Decimal(balance["locked"])
             name = balance["asset"]
             value = amount * price_list.get(name, 1)
-            print(f"{amount:18} {name}   ->  {value:9.2f} EUR")
-            wallet_value += value
-        print(f"               (value) {wallet_value:15.2f} EUR")
+            self.wallet[name] = value
+
+    def update_trades(self):
+        for symbol in self.watchdogs:
+            my_trades = self.client.my_trades(symbol)
+
+            bougth = Decimal(0)
+            price = list()
+            while my_trades and my_trades[-1].get("isBuyer", False):
+                trade = my_trades.pop()
+                bougth += Decimal(trade["qty"]) - Decimal(trade["commission"])
+                price.append(Decimal(trade["price"]))
+
+            self.commited[symbol] = bougth, mean(price) if price else Decimal(0)
 
     def get_price_ticker(self, symbols):
         """All prices are quoted in EUR"""
@@ -78,58 +90,75 @@ class PennyHunter:
         return pennies
 
     def start(self):
-        print("running as service")
+        print("Starting tracker service")
+        self.update_balance()
+        self.update_trades()
 
         for symbol, dog in self.watchdogs.items():
             data = self.cached_read(symbol)
             dog.feed(data)
             dog.run_indicators()
-            dog.draw_chart(f"./{symbol}/hourly_chart.png")
 
         for symbol, dog in self.sniffers.items():
             data = self.live_read(symbol)
             dog.feed(data, limit=FAST_CYCLE)
             dog.run_indicators()
-            dog.draw_chart(f"./{symbol}/fast_chart.png", limit=FAST_CYCLE)
 
+        schedule.every().minute.at(":07").do(lambda: self.pre_tick())
         schedule.every().minute.at(":13").do(lambda: self.tick())
 
         while True:
             schedule.run_pending()
             time.sleep(0.618033988749894)
 
+    def pre_tick(self):
+        self.update_balance()
+        self.update_trades()
+
     def tick(self):
         print(".", end="", flush=True)
+
         for symbol, dog in self.sniffers.items():
             data = self.live_read(symbol, since=dog.pop_close_time())
             dog.feed(data)
             dog.run_indicators()
 
-            current = dog.apply_all_triggers()
+            current, triggers = dog.apply_all_triggers()
             previous = self.last_signals.get(symbol, MarketSignal.HOLD)
-
-            if current != previous and current != MarketSignal.HOLD:
+            bougth, price = self.commited[symbol]
+            if bougth > Decimal(0) and current == MarketSignal.SELL and current != previous:
                 print("/")
-                dog.draw_chart(f"./{symbol}/fast_chart.png", limit=FAST_CYCLE)
-
-                diagnosis = "overbought" if current == MarketSignal.SELL else "oversold"
                 message = (
                     "{base} may be {status} at {price:.2f} EUR. We should {action}.\n"
-                    "[spot trade](https://www.binance.com/en/trade/{base}_{quote}?type=spot)"
+                    "Estimated profit {profit:.2f} EUR\n"
+                    "/open [spot trading](https://www.binance.com/en/trade/{base}_{quote}?type=spot)"
                 ).format(
                     base=dog.base_symbol,
                     quote=dog.quote_symbol,
-                    status=diagnosis,
+                    status="overbought",
                     price=dog.price,
+                    profit=(Decimal(dog.price) - price) * bougth * (Decimal(1) - self.commission),
                     action=current.name,
+                    triggers=triggers,
                 )
                 self.notifier.say(message)
-
-                long_data = self.cached_read(symbol)
-                watchdog = self.watchdogs[symbol]
-                watchdog.feed(long_data)
-                watchdog.run_indicators()
-                watchdog.draw_chart(f"./{symbol}/hourly_chart.png")
+            elif bougth <= 0 and current == MarketSignal.BUY and current != previous:
+                print("/")
+                message = (
+                    "{base} may be {status} at {price:.2f} EUR. We should {action}.\n"
+                    "Available: {fiat:.2f} EUR\n"
+                    "/open [spot trading](https://www.binance.com/en/trade/{base}_{quote}?type=spot)"
+                ).format(
+                    base=dog.base_symbol,
+                    quote=dog.quote_symbol,
+                    status="oversold",
+                    fiat=self.wallet["EUR"],
+                    price=dog.price,
+                    profit=(Decimal(dog.price) - price) * bougth * (Decimal(1) - self.commission),
+                    action=current.name,
+                    triggers=triggers,
+                )
+                self.notifier.say(message)
 
             self.last_signals[symbol] = current
 
@@ -184,7 +213,6 @@ if __name__ == "__main__":
     notifier = make_telegram_client()
 
     penny = PennyHunter(client, notifier)
-    penny.post_init()
     penny.start()
 
     print("--- the end ---")

@@ -172,10 +172,7 @@ class PinkyTracker:
             mfi=self.apply_mfi_trigger(),
             adx=self.apply_adx_trigger(),
         )
-
-        print(self.base_symbol, triggers, flush=True)
-
-        return self.pick_dominant_signal(list(triggers.values()))
+        return self.pick_dominant_signal(list(triggers.values())), triggers
 
     def draw_chart(self, to_file, limit=FULL_CYCLE):
 
