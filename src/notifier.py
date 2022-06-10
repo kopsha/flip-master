@@ -14,4 +14,8 @@ class TelegramNotifier:
         ).format(token=self.token, chat_id=self.owner_id, message=message)
 
         response = requests.get(url)
-        return response.json()
+        data = response.json()
+        if not data["ok"]:
+            print("Notification error", data["error_code"], "->", data["description"], )
+
+        return data

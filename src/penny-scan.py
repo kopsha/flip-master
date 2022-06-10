@@ -35,7 +35,7 @@ class PennyHunter:
         watchlist = [("BTC", "EUR"), ("ETH", "EUR")]
         self.watchdogs = {"".join(pair): PinkyTracker(pair) for pair in watchlist}
         self.sniffers = {"".join(pair): PinkyTracker(pair) for pair in watchlist}
-        self.last_signals = dict()
+        self.last_signal = dict()
         self.commited = dict()
 
         # prepare cache folder
@@ -123,31 +123,30 @@ class PennyHunter:
             dog.feed(data)
             dog.run_indicators()
 
-            current, triggers = dog.apply_all_triggers()
-            previous = self.last_signals.get(symbol, MarketSignal.HOLD)
+            signal = dog.compute_triggers()
             bougth, price = self.commited[symbol]
-            if bougth > Decimal(0) and current == MarketSignal.SELL and current != previous:
+            if bougth > Decimal(0) and signal == MarketSignal.SELL:
                 print("/")
                 message = (
                     "{base} may be {status} at {price:.2f} EUR. We should {action}.\n"
                     "Estimated profit {profit:.2f} EUR\n"
-                    "/open [spot trading](https://www.binance.com/en/trade/{base}_{quote}?type=spot)"
+                    "_open_ [spot trading](https://www.binance.com/en/trade/{base}_{quote}?type=spot)"
                 ).format(
                     base=dog.base_symbol,
                     quote=dog.quote_symbol,
                     status="overbought",
                     price=dog.price,
                     profit=(Decimal(dog.price) - price) * bougth * (Decimal(1) - self.commission),
-                    action=current.name,
-                    triggers=triggers,
+                    action=signal.name,
                 )
                 self.notifier.say(message)
-            elif bougth <= 0 and current == MarketSignal.BUY and current != previous:
+                dog.draw_chart(f"./{symbol}/fast_chart.png", limit=FAST_CYCLE)
+            elif bougth <= 0 and signal == MarketSignal.BUY:
                 print("/")
                 message = (
                     "{base} may be {status} at {price:.2f} EUR. We should {action}.\n"
                     "Available: {fiat:.2f} EUR\n"
-                    "/open [spot trading](https://www.binance.com/en/trade/{base}_{quote}?type=spot)"
+                    "_open_ [spot trading](https://www.binance.com/en/trade/{base}_{quote}?type=spot)"
                 ).format(
                     base=dog.base_symbol,
                     quote=dog.quote_symbol,
@@ -155,12 +154,12 @@ class PennyHunter:
                     fiat=self.wallet["EUR"],
                     price=dog.price,
                     profit=(Decimal(dog.price) - price) * bougth * (Decimal(1) - self.commission),
-                    action=current.name,
-                    triggers=triggers,
+                    action=signal.name,
                 )
                 self.notifier.say(message)
+                dog.draw_chart(f"./{symbol}/fast_chart.png", limit=FAST_CYCLE)
 
-            self.last_signals[symbol] = current
+            self.last_signal[symbol] = signal
 
     def cached_read(self, symbol: str, limit=WEEKLY_CYCLE):
         this_hour = datetime.now().replace(minute=0, second=0, microsecond=0)

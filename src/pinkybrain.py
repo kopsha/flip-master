@@ -1,13 +1,9 @@
-from decimal import Decimal
-from datetime import datetime, timedelta
-
-import numpy as np
 import pandas as pd
 import mplfinance as mpf
-from matplotlib import pyplot as plt, dates as mdates
+from matplotlib import pyplot as plt
 
 from ta.volatility import BollingerBands
-from ta.trend import ADXIndicator, PSARIndicator, stc
+from ta.trend import ADXIndicator
 from ta.volume import money_flow_index
 
 from metaflip import (
@@ -22,10 +18,6 @@ from metaflip import (
 
 
 class PinkyTracker:
-    SIGNAL_TTL = 5
-    MFI_HIGH = 65
-    MFI_LOW = 35
-
     def __init__(self, trading_pair, wix=6):
         self.base_symbol, self.quote_symbol = trading_pair
         self.wix = wix
@@ -41,6 +33,8 @@ class PinkyTracker:
                 "close_time",
             ]
         )
+
+        self.pre_signal = None
 
     @property
     def faster_window(self):
@@ -96,7 +90,11 @@ class PinkyTracker:
                 "volume": "float",
             }
         )
-        adx = ADXIndicator(high=df["high"], low=df["low"], close=df["close"], window=self.fast_window)
+        # self.data["velocity"] = self.data["close"].diff()
+        self.data["high_velocity"] = self.data["high"].diff()
+        self.data["low_velocity"] = self.data["low"].diff()
+
+        adx = ADXIndicator(high=df["high"], low=df["low"], close=df["close"], window=self.faster_window)
         self.data["adx_pos"] = adx.adx_pos()
         self.data["adx_neg"] = adx.adx_neg()
 
@@ -104,75 +102,36 @@ class PinkyTracker:
         self.data["bb_high"] = bb.bollinger_hband()
         self.data["bb_low"] = bb.bollinger_lband()
 
-        self.data["mfi"] = money_flow_index(df["high"], df["low"], df["close"], df["volume"], window=self.fast_window)
+        self.data["mfi"] = money_flow_index(df["high"], df["low"], df["close"], df["volume"], window=self.faster_window)
 
-    def apply_adx_trigger(self):
-        if self.data["adx_pos"].size == 0:
-            return MarketSignal.HOLD
-
-        adx_pos = self.data["adx_pos"].iloc[-1]
-        adx_neg = self.data["adx_neg"].iloc[-1]
-        treshold = 30
-
-        if adx_pos >= treshold and adx_pos > adx_neg:
-            return MarketSignal.SELL
-
-        if adx_neg >= treshold and adx_neg > adx_pos:
-            return MarketSignal.BUY
-
-        return MarketSignal.HOLD
-
-    def apply_mfi_trigger(self):
-        if self.data["mfi"].size == 0:
-            return MarketSignal.HOLD
-
-        mfi = self.data["mfi"].iloc[-1]
-
-        if mfi >= self.MFI_HIGH:
-            return MarketSignal.SELL
-
-        if mfi <= self.MFI_LOW:
-            return MarketSignal.BUY
-
-        return MarketSignal.HOLD
-
-    def apply_bb_trigger(self):
-        if self.data["mfi"].size == 0:
-            return MarketSignal.HOLD
-
+    def compute_triggers(self):
         price = self.price
         high = self.data["bb_high"].iloc[-1]
         low = self.data["bb_low"].iloc[-1]
-        tolerance = price * 0.001
+        high_velocity = self.data["high_velocity"].iloc[-1]
+        low_velocity = self.data["high_velocity"].iloc[-1]
 
-        if price + tolerance >= high:
+        if self.pre_signal == MarketSignal.SELL and high_velocity <= 0:
+            self.pre_signal = None
             return MarketSignal.SELL
-
-        if price - tolerance <= low:
+        elif self.pre_signal == MarketSignal.BUY and low_velocity >= 0:
+            self.pre_signal = None
             return MarketSignal.BUY
 
+        if price >= high:
+            if high_velocity > 0:
+                self.pre_signal = MarketSignal.SELL
+            else:
+                self.pre_signal = None
+                return MarketSignal.SELL
+        elif price <= low:
+            if high_velocity < 0:
+                self.pre_signal = MarketSignal.BUY
+            else:
+                self.pre_signal = None
+                return MarketSignal.BUY
+
         return MarketSignal.HOLD
-
-    def pick_dominant_signal(self, signals):
-        bears = signals.count(MarketSignal.SELL)
-        bulls = signals.count(MarketSignal.BUY)
-
-        if bears > bulls and bears >= 2:
-            signal = MarketSignal.SELL
-        elif bulls > bears and bulls >= 2:
-            signal = MarketSignal.BUY
-        else:
-            signal = MarketSignal.HOLD
-
-        return signal
-
-    def apply_all_triggers(self):
-        triggers = dict(
-            bb=self.apply_bb_trigger(),
-            mfi=self.apply_mfi_trigger(),
-            adx=self.apply_adx_trigger(),
-        )
-        return self.pick_dominant_signal(list(triggers.values())), triggers
 
     def draw_chart(self, to_file, limit=FULL_CYCLE):
 
@@ -184,25 +143,14 @@ class PinkyTracker:
                 "close": "float",
                 "volume": "float",
             }
-        )  # again :()
+        )
 
         extras = [
-
             mpf.make_addplot(
                 self.data["bb_high"], color="dodgerblue", panel=0, secondary_y=False
             ),
             mpf.make_addplot(
                 self.data["bb_low"], color="darkorange", panel=0, secondary_y=False
-            ),
-
-            mpf.make_addplot(
-                self.data["adx_pos"], color="dodgerblue", panel=1, secondary_y=False
-            ),
-            mpf.make_addplot(
-                self.data["adx_neg"], color="darkorange", panel=1, secondary_y=False
-            ),
-            mpf.make_addplot(
-                self.data["mfi"], color="tomato", panel=1, secondary_y=False
             ),
         ]
 
