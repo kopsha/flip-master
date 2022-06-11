@@ -29,6 +29,7 @@ printf " --\n"
 ssh fibonet /bin/bash <<'EOT'
 set -e
 cd /var/www/penny
+docker-compose down --remove-orphans
 docker-compose up -d --build --remove-orphans
 EOT
 
