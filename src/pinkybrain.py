@@ -1,3 +1,4 @@
+import os
 import pandas as pd
 from ta.volatility import BollingerBands
 from ta.trend import ADXIndicator
@@ -29,6 +30,8 @@ class PinkyTracker:
         )
 
         self.pre_signal = None
+        symbol = "".join(trading_pair)
+        os.makedirs(f"./{symbol}", exist_ok=True)
 
     @property
     def faster_window(self):

@@ -1,6 +1,7 @@
 import os
 import configparser
 from binance.spot import Spot
+from binance.error import ClientError
 from notifier import TelegramNotifier
 
 

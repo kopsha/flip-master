@@ -16,6 +16,7 @@ from trade_clients import (
     make_binance_test_client,
     make_telegram_client,
     Spot,
+    ClientError,
     TelegramNotifier,
 )
 from pinkybrain import PinkyTracker
@@ -28,19 +29,47 @@ def set_decimal_precison_context(symbol_data):
 
 
 class PennyHunter:
+    PREFFERED_QUOTE_ASSETS = ("EUR", "USD", "USDT", "BUSD")
+
     def __init__(self, client: Spot, notifier: TelegramNotifier):
         self.client = client
         self.notifier = notifier
 
-        watchlist = [("BTC", "EUR"), ("BNB", "EUR")]
-        self.watchdogs = {"".join(pair): PinkyTracker(pair) for pair in watchlist}
-        self.sniffers = {"".join(pair): PinkyTracker(pair) for pair in watchlist}
+        self.sniffers = dict()
         self.last_signal = dict()
         self.commited = dict()
+        self.all_symbols = dict()
 
-        # prepare cache folder
-        for symbol in self.watchdogs:
-            os.makedirs(f"./{symbol}", exist_ok=True)
+        exchage_data = self.client.exchange_info()
+        serverTimestamp = int(exchage_data["serverTime"]) // 1000
+
+        precision = 1
+        quote_symbols = set()
+        for symbol_data in exchage_data["symbols"]:
+            precision = max(
+                (
+                    precision,
+                    symbol_data["baseAssetPrecision"],
+                    symbol_data["quoteAssetPrecision"],
+                )
+            )
+            self.all_symbols[symbol_data["symbol"]] = (
+                symbol_data["baseAsset"],
+                symbol_data["quoteAsset"],
+            )
+            quote_symbols.add(symbol_data["quoteAsset"])
+
+        getcontext().prec = precision
+        print(". set decimal precision to", precision, "digits")
+
+        self.value_asset = next(
+            filter(lambda x: x in quote_symbols, self.PREFFERED_QUOTE_ASSETS)
+        )
+        print(". expressing values in", self.value_asset)
+
+        account_data = self.client.account()
+        assert account_data["makerCommission"] == account_data["takerCommission"]
+        self.commission = Decimal(account_data["makerCommission"] or 10) / 10000
 
     def update_balance(self):
         account_data = self.client.account()
@@ -50,19 +79,29 @@ class PennyHunter:
                 account_data.pop("balances"),
             )
         )
-        symbols = {x["asset"] + "EUR" for x in balances if x["asset"] != "EUR"}
 
-        exchage_data = self.client.exchange_info(symbols=sorted(symbols))
-        serverTimestamp = int(exchage_data["serverTime"]) // 1000
+        active_symbols = {
+            x["asset"] + self.value_asset
+            for x in balances
+            if (x["asset"] + self.value_asset) in self.all_symbols
+        }
 
-        symbol_data = exchage_data["symbols"][0]
-        set_decimal_precison_context(symbol_data)
+        self.estimate_wallet_value(balances, active_symbols)
 
-        assert account_data["makerCommission"] == account_data["takerCommission"]
-        self.commission = Decimal(account_data["makerCommission"] or 10) / 10000
+        # update sniffers
+        lost_dogs = self.sniffers.keys() - active_symbols
+        found_dogs = active_symbols - self.sniffers.keys()
 
-        price_list = self.get_price_ticker(symbols=sorted(symbols))
+        list(map(self.sniffers.pop, lost_dogs))
+        self.sniffers.update({name: PinkyTracker(self.all_symbols[name]) for name in found_dogs})
 
+        if lost_dogs:
+            self.notifier.say(f"Lost: `{lost_dogs}`")
+        if found_dogs:
+            self.notifier.say(f"Found: `{found_dogs}`")
+
+    def estimate_wallet_value(self, balances, active_symbols):
+        price_list = self.get_price_ticker(symbols=sorted(active_symbols))
         self.wallet = dict()
         for balance in balances:
             amount = Decimal(balance["free"]) + Decimal(balance["locked"])
@@ -71,7 +110,7 @@ class PennyHunter:
             self.wallet[name] = value
 
     def update_trades(self):
-        for symbol in self.watchdogs:
+        for symbol in self.sniffers:
             my_trades = self.client.my_trades(symbol)
 
             bougth = Decimal(0)
@@ -173,6 +212,14 @@ class PennyHunter:
     def spin_exec(self, method: callable):
         try:
             method()
+        except ClientError as exc:
+            msg = (
+                "`ClientError({code})` occured durring `{method}()`:\n{message}".format(
+                    code=exc.status_code, method="startup", message=exc.error_message
+                )
+            )
+            print(msg)
+            self.notifier.say(msg)
         except Exception as err:
             ex_type, ex_value, _ = sys.exc_info()
             msg = "`{type}` occured durring `{method}()`:\n{message}.".format(
@@ -184,27 +231,32 @@ class PennyHunter:
     def start_spinning(self, prog_alias):
         print("Starting penny-tracker service")
 
-        self.update_balance()
-        self.update_trades()
+        try:
+            self.update_balance()
+            self.update_trades()
 
-        for symbol, dog in self.watchdogs.items():
-            data = self.cached_read(symbol)
-            dog.feed(data)
-            dog.run_indicators()
-
-        for symbol, dog in self.sniffers.items():
-            data = self.live_read(symbol)
-            dog.feed(data, limit=FAST_CYCLE)
-            dog.run_indicators()
+            for symbol, dog in self.sniffers.items():
+                data = self.live_read(symbol)
+                dog.feed(data, limit=FAST_CYCLE)
+                dog.run_indicators()
+        except ClientError as exc:
+            msg = (
+                "`ClientError({code})` occured durring `{method}()`:\n{message}".format(
+                    code=exc.status_code, method="start_spinning", message=exc.error_message
+                )
+            )
+            print(msg)
+            self.notifier.say(msg)
+        except Exception as err:
+            ex_type, ex_value, _ = sys.exc_info()
+            msg = "`{type}` occured durring `{method}()`:\n{message}.".format(
+                type=ex_type.__name__, method="start_spinning", message=ex_value
+            )
+            print(msg)
+            self.notifier.say(msg)
 
         schedule.every().minute.at(":07").do(lambda: self.spin_exec(self.pre_tick))
         schedule.every().minute.at(":13").do(lambda: self.spin_exec(self.tick))
-
-        start_message = "`./{}` has started, watchlist {}.".format(
-            prog_alias,
-            ", ".join(self.watchdogs.keys()),
-        )
-        self.notifier.say(start_message)
 
         while True:
             schedule.run_pending()

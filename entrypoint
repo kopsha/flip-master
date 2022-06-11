@@ -11,7 +11,7 @@ main()
         develop)
             printf "\t ..: Starting the developer loop\n"
             shift
-            find ./ -name "*.py" | entr -r ./penny-scan.py --go-live
+            find ./ -name "*.py" | entr -r ./penny-scan.py $*
             ;;
         *)
             printf "\t ..: Invoking '$*'\n"
