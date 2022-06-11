@@ -32,7 +32,7 @@ class PennyHunter:
         self.client = client
         self.notifier = notifier
 
-        watchlist = [("BTC", "EUR"), ("ETH", "EUR")]
+        watchlist = [("BTC", "EUR"), ("BNB", "EUR")]
         self.watchdogs = {"".join(pair): PinkyTracker(pair) for pair in watchlist}
         self.sniffers = {"".join(pair): PinkyTracker(pair) for pair in watchlist}
         self.last_signal = dict()
