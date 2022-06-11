@@ -93,7 +93,9 @@ class PennyHunter:
         found_dogs = active_symbols - self.sniffers.keys()
 
         list(map(self.sniffers.pop, lost_dogs))
-        self.sniffers.update({name: PinkyTracker(self.all_symbols[name]) for name in found_dogs})
+        self.sniffers.update(
+            {name: PinkyTracker(self.all_symbols[name]) for name in found_dogs}
+        )
 
         if lost_dogs:
             self.notifier.say(f"Lost: `{lost_dogs}`")
@@ -242,7 +244,9 @@ class PennyHunter:
         except ClientError as exc:
             msg = (
                 "`ClientError({code})` occured durring `{method}()`:\n{message}".format(
-                    code=exc.status_code, method="start_spinning", message=exc.error_message
+                    code=exc.status_code,
+                    method="start_spinning",
+                    message=exc.error_message,
                 )
             )
             print(msg)
