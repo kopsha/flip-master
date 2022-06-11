@@ -4,6 +4,9 @@ set -e
 PROJECT_ROOT=$(git rev-parse --show-toplevel)
 PROJECT_NAME=$(basename $PROJECT_ROOT)
 
+printf " --\n"
+printf " -- stopping previous version\n"
+printf " --\n"
 ssh fibonet /bin/bash <<'EOT'
 set -e
 cd /var/www/penny
