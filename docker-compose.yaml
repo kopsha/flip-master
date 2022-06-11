@@ -1,0 +1,9 @@
+version: "3.9"
+
+services:
+    penny:
+        build: .
+        volumes:
+            - ./src:/app/src
+        user: "1051:1051"
+        restart: unless-stopped
