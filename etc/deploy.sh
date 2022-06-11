@@ -11,6 +11,12 @@ printf " --\n"
 cd $PROJECT_ROOT
 find . | grep -E "(/__pycache__$|\.pyc$|\.pyo$)" | xargs rm -rf
 
+ssh fibonet /bin/bash <<'EOT'
+set -e
+cd /var/www/penny
+ssh fibonet docker-compose down --remove-orphans
+EOT
+
 printf "copying files"
 rsync -az $PROJECT_ROOT/ fibonet:/var/www/penny/
 
@@ -29,7 +35,6 @@ printf " --\n"
 ssh fibonet /bin/bash <<'EOT'
 set -e
 cd /var/www/penny
-docker-compose down --remove-orphans
 docker-compose up -d --build --remove-orphans
 EOT
 
