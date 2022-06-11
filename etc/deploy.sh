@@ -4,18 +4,18 @@ set -e
 PROJECT_ROOT=$(git rev-parse --show-toplevel)
 PROJECT_NAME=$(basename $PROJECT_ROOT)
 
+ssh fibonet /bin/bash <<'EOT'
+set -e
+cd /var/www/penny
+docker-compose down --remove-orphans
+EOT
+
 printf " --\n"
 printf " -- deploying $PROJECT_NAME (from $PROJECT_ROOT)\n"
 printf " --\n"
 
 cd $PROJECT_ROOT
 find . | grep -E "(/__pycache__$|\.pyc$|\.pyo$)" | xargs rm -rf
-
-ssh fibonet /bin/bash <<'EOT'
-set -e
-cd /var/www/penny
-ssh fibonet docker-compose down --remove-orphans
-EOT
 
 printf "copying files"
 rsync -az $PROJECT_ROOT/ fibonet:/var/www/penny/
