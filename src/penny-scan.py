@@ -120,7 +120,7 @@ class PennyHunter:
                     action=signal.name,
                 )
                 self.notifier.say(message)
-            elif bougth <= 0 and signal == MarketSignal.BUY:
+            elif self.wallet["EUR"] > 20 and signal == MarketSignal.BUY:
                 print("/")
                 message = (
                     "{base} may be {status} at {price:.2f} EUR. We should {action}.\n"
