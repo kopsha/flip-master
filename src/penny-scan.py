@@ -89,34 +89,6 @@ class PennyHunter:
         pennies = {tick["symbol"][:-3]: Decimal(tick["price"]) for tick in price_data}
         return pennies
 
-    def start(self):
-        print("Starting tracker service")
-        self.update_balance()
-        self.update_trades()
-
-        for symbol, dog in self.watchdogs.items():
-            data = self.cached_read(symbol)
-            dog.feed(data)
-            dog.run_indicators()
-
-        for symbol, dog in self.sniffers.items():
-            data = self.live_read(symbol)
-            dog.feed(data, limit=FAST_CYCLE)
-            dog.run_indicators()
-
-        schedule.every().minute.at(":07").do(lambda: self.pre_tick())
-        schedule.every().minute.at(":13").do(lambda: self.tick())
-
-        start_message = "Penny hunter has started, cached {} records on {}".format(
-            sum([x.data.size for x in self.watchdogs.values()]),
-            ",".join(self.watchdogs.keys()),
-        )
-        self.notifier.say(start_message)
-
-        while True:
-            schedule.run_pending()
-            time.sleep(0.618033988749894)
-
     def pre_tick(self):
         self.update_balance()
         self.update_trades()
@@ -201,6 +173,34 @@ class PennyHunter:
 
     def live_read(self, symbol: str, limit=FAST_CYCLE, since=None):
         return client.klines(symbol, "1m", limit=limit, startTime=since)
+
+    def start_spinning(self):
+        print("Starting penny-tracker service")
+        self.update_balance()
+        self.update_trades()
+
+        for symbol, dog in self.watchdogs.items():
+            data = self.cached_read(symbol)
+            dog.feed(data)
+            dog.run_indicators()
+
+        for symbol, dog in self.sniffers.items():
+            data = self.live_read(symbol)
+            dog.feed(data, limit=FAST_CYCLE)
+            dog.run_indicators()
+
+        schedule.every().minute.at(":07").do(lambda: self.pre_tick())
+        schedule.every().minute.at(":13").do(lambda: self.tick())
+
+        start_message = "Penny hunter has started, cached {} records on {}".format(
+            sum([x.data["close"].size for x in self.watchdogs.values()]),
+            ",".join(self.watchdogs.keys()),
+        )
+        self.notifier.say(start_message)
+
+        while True:
+            schedule.run_pending()
+            time.sleep(0.1)
 
 
 if __name__ == "__main__":

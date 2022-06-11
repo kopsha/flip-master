@@ -2,11 +2,11 @@ import requests
 
 
 class TelegramNotifier:
-    def __init__(self, token, owner_id):
+    def __init__(self, token, chat_id):
         self.token = token
-        self.owner_id = owner_id
+        self.chat_id = chat_id
 
-        # url = "https://api.telegram.org/bot{token}/getUpdates".format(token=self.token, chat_id=self.owner_id)
+        # url = "https://api.telegram.org/bot{token}/getUpdates".format(token=self.token, chat_id=self.chat_id)
         # response = requests.get(url)
         # data = response.json()
         # print(data)
@@ -16,7 +16,7 @@ class TelegramNotifier:
             "https://api.telegram.org/bot{token}/sendMessage?"
             "chat_id={chat_id}&text={message}"
             "&parse_mode=Markdown&disable_web_page_preview=true"
-        ).format(token=self.token, chat_id=self.owner_id, message=message)
+        ).format(token=self.token, chat_id=self.chat_id, message=message)
 
         response = requests.get(url)
         data = response.json()
