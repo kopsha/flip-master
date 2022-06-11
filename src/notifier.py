@@ -6,10 +6,12 @@ class TelegramNotifier:
         self.token = token
         self.chat_id = chat_id
 
-        # url = "https://api.telegram.org/bot{token}/getUpdates".format(token=self.token, chat_id=self.chat_id)
-        # response = requests.get(url)
-        # data = response.json()
-        # print(data)
+    def updates(self):
+        url = "https://api.telegram.org/bot{token}/getUpdates".format(
+            token=self.token,
+        )
+        response = requests.get(url)
+        return response.json()
 
     def say(self, message):
         url = (
@@ -22,10 +24,10 @@ class TelegramNotifier:
         data = response.json()
         if not data["ok"]:
             print(
-                "Notification error",
-                data["error_code"],
-                "->",
-                data["description"],
+                "Notification error {code}: {description}".format(
+                    code=data["error_code"],
+                    description=data["description"],
+                )
             )
 
         return data

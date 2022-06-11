@@ -1,18 +1,12 @@
 import pandas as pd
-import mplfinance as mpf
-from matplotlib import pyplot as plt
-
 from ta.volatility import BollingerBands
 from ta.trend import ADXIndicator
 from ta.volume import money_flow_index
 
 from metaflip import (
-    KLinePoint,
     CandleStick,
     MarketSignal,
     FULL_CYCLE,
-    WEEKLY_CYCLE,
-    DAILY_CYCLE,
     FIBONACCI,
 )
 
@@ -90,6 +84,7 @@ class PinkyTracker:
                 "volume": "float",
             }
         )
+
         # self.data["velocity"] = self.data["close"].diff()
         self.data["high_velocity"] = self.data["high"].diff()
         self.data["low_velocity"] = self.data["low"].diff()
@@ -175,46 +170,3 @@ class PinkyTracker:
                 low_velocity,
                 row["low"],
             )
-
-    def draw_chart(self, to_file):
-
-        df = self.data.astype(
-            {
-                "open": "float",
-                "high": "float",
-                "low": "float",
-                "close": "float",
-                "volume": "float",
-            }
-        )
-
-        extras = [
-            mpf.make_addplot(
-                self.data["bb_high"], color="dodgerblue", panel=0, secondary_y=False
-            ),
-            mpf.make_addplot(
-                self.data["bb_low"], color="darkorange", panel=0, secondary_y=False
-            ),
-        ]
-
-        fig, axes = mpf.plot(
-            df,
-            type="candle",
-            addplot=extras,
-            title=f"{self.base_symbol}/{self.quote_symbol}",
-            # volume=True,
-            figsize=(13, 8),
-            tight_layout=True,
-            style="yahoo",
-            xrotation=0,
-            returnfig=True,
-        )
-
-        for ax in axes:
-            ax.yaxis.tick_left()
-            ax.yaxis.label.set_visible(False)
-            ax.margins(x=0.1, y=0.1, tight=False)
-
-        plt.savefig(to_file, bbox_inches="tight", pad_inches=0.3, dpi=300)
-        plt.close()
-        print(f"saved chart as {to_file}")

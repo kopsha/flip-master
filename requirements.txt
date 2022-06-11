@@ -1,6 +1,4 @@
 binance-connector
-matplotlib
 pandas
-mplfinance
 ta
 schedule

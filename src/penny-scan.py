@@ -9,7 +9,6 @@ from argparse import ArgumentParser
 from datetime import datetime, timedelta
 from decimal import Decimal, getcontext
 from statistics import mean
-from functools import partial
 
 from metaflip import WEEKLY_CYCLE, FAST_CYCLE, MarketSignal
 from trade_clients import (

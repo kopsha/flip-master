@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 from collections import namedtuple
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from enum import IntEnum
 from decimal import Decimal
-from statistics import mean
 
 
 # minute candlesticks
