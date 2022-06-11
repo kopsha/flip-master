@@ -30,8 +30,10 @@ class PinkyTracker:
         )
 
         self.pre_signal = None
-        symbol = "".join(trading_pair)
-        os.makedirs(f"./{symbol}", exist_ok=True)
+
+        # prepare for cached reads
+        # symbol = "".join(trading_pair)
+        # os.makedirs(f"./{symbol}", exist_ok=True)
 
     @property
     def faster_window(self):
