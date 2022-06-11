@@ -31,11 +31,8 @@ USER ${UNAME}
 COPY entrypoint /app/
 ENTRYPOINT ["/app/entrypoint"]
 
-# prepare container for production
-# COPY ./src/ /app/src/
-
 # override for local environment
 VOLUME ["/app/src"]
 
 EXPOSE $PORT
-CMD ["kickflip.py", "--budget", "250", "--go-live", "--pair", "ETHEUR"]
+CMD ["./penny-scan.py", "--go-live"]

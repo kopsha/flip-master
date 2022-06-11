@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 
-from collections import defaultdict
 import os
 import pickle
 import time
 import schedule
+import sys
 from argparse import ArgumentParser
 from datetime import datetime, timedelta
 from decimal import Decimal, getcontext
 from statistics import mean
+from functools import partial
 
 from metaflip import WEEKLY_CYCLE, FAST_CYCLE, MarketSignal
 from trade_clients import (
@@ -105,8 +106,7 @@ class PennyHunter:
             bougth, price = self.commited[symbol]
             profit = (Decimal(dog.price) - price) * bougth * (1 - self.commission)
 
-            # if bougth > Decimal(0) and signal == MarketSignal.SELL:
-            if signal == MarketSignal.SELL:
+            if bougth > Decimal(0) and signal == MarketSignal.SELL:
                 print("/")
                 message = (
                     "{base} may be {status} at {price:.2f} EUR. We should {action}.\n"
@@ -121,9 +121,7 @@ class PennyHunter:
                     action=signal.name,
                 )
                 self.notifier.say(message)
-                dog.draw_chart(f"./{symbol}/fast_chart.png")
-            # elif bougth <= 0 and signal == MarketSignal.BUY:
-            elif signal == MarketSignal.BUY:
+            elif bougth <= 0 and signal == MarketSignal.BUY:
                 print("/")
                 message = (
                     "{base} may be {status} at {price:.2f} EUR. We should {action}.\n"
@@ -138,7 +136,6 @@ class PennyHunter:
                     action=signal.name,
                 )
                 self.notifier.say(message)
-                dog.draw_chart(f"./{symbol}/fast_chart.png")
 
             self.last_signal[symbol] = signal
 
@@ -174,8 +171,20 @@ class PennyHunter:
     def live_read(self, symbol: str, limit=FAST_CYCLE, since=None):
         return client.klines(symbol, "1m", limit=limit, startTime=since)
 
-    def start_spinning(self):
+    def spin_exec(self, method: callable):
+        try:
+            method()
+        except Exception as err:
+            ex_type, ex_value, _ = sys.exc_info()
+            msg = "`{type}` occured durring `{method}()`:\n{message}.".format(
+                type=ex_type.__name__, method=method.__name__, message=ex_value
+            )
+            print(msg)
+            self.notifier.say(msg)
+
+    def start_spinning(self, prog_alias):
         print("Starting penny-tracker service")
+
         self.update_balance()
         self.update_trades()
 
@@ -189,12 +198,12 @@ class PennyHunter:
             dog.feed(data, limit=FAST_CYCLE)
             dog.run_indicators()
 
-        schedule.every().minute.at(":07").do(lambda: self.pre_tick())
-        schedule.every().minute.at(":13").do(lambda: self.tick())
+        schedule.every().minute.at(":07").do(lambda: self.spin_exec(self.pre_tick))
+        schedule.every().minute.at(":13").do(lambda: self.spin_exec(self.tick))
 
-        start_message = "Penny hunter has started, cached {} records on {}".format(
-            sum([x.data["close"].size for x in self.watchdogs.values()]),
-            ",".join(self.watchdogs.keys()),
+        start_message = "`./{}` has started, watchlist {}.".format(
+            prog_alias,
+            ", ".join(self.watchdogs.keys()),
         )
         self.notifier.say(start_message)
 
@@ -221,6 +230,6 @@ if __name__ == "__main__":
     notifier = make_telegram_client()
 
     penny = PennyHunter(client, notifier)
-    penny.start()
+    penny.start_spinning(args.prog)
 
     print("--- the end ---")
