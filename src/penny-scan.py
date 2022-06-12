@@ -103,8 +103,9 @@ class PennyHunter:
             self.notifier.say(f"Found: `{found_dogs}`")
 
     def estimate_wallet_value(self, balances, active_symbols):
-        price_data = self.client.ticker_price(symbols=active_symbols)
+        price_data = self.client.ticker_price(symbols=list(active_symbols))
         prices = {tick["symbol"][:-3]: Decimal(tick["price"]) for tick in price_data}
+
         self.wallet = dict()
         for balance in balances:
             amount = Decimal(balance["free"]) + Decimal(balance["locked"])
@@ -124,10 +125,6 @@ class PennyHunter:
                 price.append(Decimal(trade["price"]))
 
             self.commited[symbol] = bougth, mean(price) if price else Decimal(0)
-
-    def get_price_ticker(self, symbols):
-        """All prices are quoted in EUR"""
-        return pennies
 
     def pre_tick(self):
         self.update_balance()
@@ -229,7 +226,7 @@ class PennyHunter:
             print(msg)
             self.notifier.say(msg)
 
-    def start_spinning(self, prog_alias):
+    def start_spinning(self):
         print("Starting penny-tracker service")
 
         try:
@@ -240,6 +237,7 @@ class PennyHunter:
                 data = self.live_read(symbol)
                 dog.feed(data, limit=FAST_CYCLE)
                 dog.run_indicators()
+
         except ClientError as exc:
             msg = (
                 "`ClientError({code})` occured durring `{method}()`:\n{message}".format(
@@ -250,6 +248,7 @@ class PennyHunter:
             )
             print(msg)
             self.notifier.say(msg)
+
         except Exception as err:
             ex_type, ex_value, _ = sys.exc_info()
             msg = "`{type}` occured durring `{method}()`:\n{message}.".format(
@@ -284,6 +283,6 @@ if __name__ == "__main__":
     notifier = make_telegram_client()
 
     penny = PennyHunter(client, notifier)
-    penny.start_spinning(args.prog)
+    penny.start_spinning()
 
     print("--- the end ---")

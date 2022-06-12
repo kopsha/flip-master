@@ -11,7 +11,8 @@ from metaflip import (
     FIBONACCI,
 )
 
-import mplfinance as mpf
+# import mplfinance as mpf
+# from matplotlib import pyplot as plt
 
 
 class PinkyTracker:
@@ -100,13 +101,78 @@ class PinkyTracker:
         self.data["bb_high"] = bb.bollinger_hband()
         self.data["bb_low"] = bb.bollinger_lband()
 
-        self.data["stdev0"] = self.data["close"].rolling(self.window).std(ddof=0)
-        self.data["stdev1"] = self.data["close"].rolling(self.window).std(ddof=1)
+        self.data["stdev"] = df["close"].rolling(self.window).std()
+        self.data["vwap"] = volume_weighted_average_price(
+            high=df["high"],
+            low=df["low"],
+            close=df["close"],
+            volume=df["volume"],
+            window=self.window,
+        )
+        self.data["vwap_vhigh"] = self.data["vwap"] + 2 * self.data["stdev"]
+        self.data["vwap_high"] = self.data["vwap"] + 1 * self.data["stdev"]
+        self.data["vwap_low"] = self.data["vwap"] - 1 * self.data["stdev"]
+        self.data["vwap_vlow"] = self.data["vwap"] - 2 * self.data["stdev"]
 
     def show_chart(self):
-        mpf.plot(
+        df = self.data.astype(
+            {
+                "open": "float",
+                "high": "float",
+                "low": "float",
+                "close": "float",
+                "volume": "float",
+            }
+        )  # again :()
 
+        extras = [
+
+
+            # mpf.make_addplot(
+            #     self.data["bb_high"], color="lime", panel=0, secondary_y=False
+            # ),
+            # mpf.make_addplot(
+            #     self.data["bb_low"], color="gold", panel=0, secondary_y=False
+            # ),
+
+            mpf.make_addplot(
+                self.data["vwap"], color="blueviolet", panel=0, secondary_y=False
+            ),
+
+            mpf.make_addplot(
+                self.data["vwap_vhigh"], color="royalblue", panel=0, secondary_y=False
+            ),
+            mpf.make_addplot(
+                self.data["vwap_high"], color="deepskyblue", panel=0, secondary_y=False
+            ),
+            mpf.make_addplot(
+                self.data["vwap_low"], color="darkorange", panel=0, secondary_y=False
+            ),
+            mpf.make_addplot(
+                self.data["vwap_vlow"], color="orangered", panel=0, secondary_y=False
+            ),
+        ]
+
+        fig, axes = mpf.plot(
+            df,
+            type="candle",
+            addplot=extras,
+            title=f"{self.base_symbol}/{self.quote_symbol}",
+            # volume=True,
+            figsize=(13, 8),
+            tight_layout=True,
+            style="yahoo",
+            xrotation=0,
+            returnfig=True,
         )
+
+        for ax in axes:
+            ax.yaxis.tick_left()
+            ax.yaxis.label.set_visible(False)
+            ax.margins(x=0.1, y=0.1, tight=False)
+
+        plt.savefig(f"{self.base_symbol}_{self.quote_symbol}.png", bbox_inches="tight", pad_inches=0.3, dpi=300)
+        plt.close()
 
     def compute_triggers(self):
         price = self.price
