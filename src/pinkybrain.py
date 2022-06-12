@@ -2,7 +2,7 @@ import os
 import pandas as pd
 from ta.volatility import BollingerBands
 from ta.trend import ADXIndicator
-from ta.volume import money_flow_index
+from ta.volume import money_flow_index, volume_weighted_average_price
 
 from metaflip import (
     CandleStick,
@@ -10,6 +10,8 @@ from metaflip import (
     FULL_CYCLE,
     FIBONACCI,
 )
+
+import mplfinance as mpf
 
 
 class PinkyTracker:
@@ -94,18 +96,16 @@ class PinkyTracker:
         self.data["high_velocity"] = self.data["high"].diff()
         self.data["low_velocity"] = self.data["low"].diff()
 
-        adx = ADXIndicator(
-            high=df["high"], low=df["low"], close=df["close"], window=self.faster_window
-        )
-        self.data["adx_pos"] = adx.adx_pos()
-        self.data["adx_neg"] = adx.adx_neg()
-
         bb = BollingerBands(close=df["close"], window=self.window)
         self.data["bb_high"] = bb.bollinger_hband()
         self.data["bb_low"] = bb.bollinger_lband()
 
-        self.data["mfi"] = money_flow_index(
-            df["high"], df["low"], df["close"], df["volume"], window=self.faster_window
+        self.data["stdev0"] = self.data["close"].rolling(self.window).std(ddof=0)
+        self.data["stdev1"] = self.data["close"].rolling(self.window).std(ddof=1)
+
+    def show_chart(self):
+        mpf.plot(
+
         )
 
     def compute_triggers(self):

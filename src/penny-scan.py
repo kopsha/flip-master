@@ -103,12 +103,13 @@ class PennyHunter:
             self.notifier.say(f"Found: `{found_dogs}`")
 
     def estimate_wallet_value(self, balances, active_symbols):
-        price_list = self.get_price_ticker(symbols=sorted(active_symbols))
+        price_data = self.client.ticker_price(symbols=active_symbols)
+        prices = {tick["symbol"][:-3]: Decimal(tick["price"]) for tick in price_data}
         self.wallet = dict()
         for balance in balances:
             amount = Decimal(balance["free"]) + Decimal(balance["locked"])
             name = balance["asset"]
-            value = amount * price_list.get(name, 1)
+            value = amount * prices.get(name, 1)
             self.wallet[name] = value
 
     def update_trades(self):
@@ -126,8 +127,6 @@ class PennyHunter:
 
     def get_price_ticker(self, symbols):
         """All prices are quoted in EUR"""
-        price_data = self.client.ticker_price(symbols=symbols)
-        pennies = {tick["symbol"][:-3]: Decimal(tick["price"]) for tick in price_data}
         return pennies
 
     def pre_tick(self):
