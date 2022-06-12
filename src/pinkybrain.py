@@ -64,7 +64,10 @@ class PinkyTracker:
 
     def pop_close_time(self):
         self.data.drop(self.data.tail(1).index, inplace=True)
-        close_time = int(self.data["close_time"].iloc[-1].timestamp()) * 1000
+        if self.data["close_time"].size:
+            close_time = int(self.data["close_time"].iloc[-1].timestamp()) * 1000
+        else:
+            close_time = None
         return close_time
 
     def feed(self, kline_data, limit=FULL_CYCLE):
