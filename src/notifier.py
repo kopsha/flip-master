@@ -5,8 +5,10 @@ class TelegramNotifier:
     def __init__(self, token, chat_id):
         self.token = token
         self.chat_id = chat_id
+        self.last_update_id = None
 
-    def updates(self):
+    def get_updates(self):
+
         url = "https://api.telegram.org/bot{token}/getUpdates".format(
             token=self.token,
         )
